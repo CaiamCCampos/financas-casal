@@ -1,5 +1,8 @@
 import { CATEGORIAS, CATEGORIAS_RECEITA, PAGAMENTOS, CAT_CARTAO, pessoas, hoje } from './config.js';
 import { extrair } from './ia.js';
+import { ErroHttp, erro, pinConfere } from './erros.js';
+import { paraCentavos, textoCurto, normalizarLancamento, idDoCartao, salvarLancamentos } from './lancamentos.js';
+import { webhook as telegramWebhook, conectar as telegramConectar, status as telegramStatus } from './telegram.js';
 import { planilhaDoMes, planilhaCompleta, relatorioPessoa } from './planilha.js';
 import {
   intervalo,
@@ -18,86 +21,12 @@ const json = (dados, status = 200) =>
     headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
   });
 
-class ErroHttp extends Error {
-  constructor(status, mensagem) {
-    super(mensagem);
-    this.status = status;
-  }
-}
-
-const erro = (status, mensagem) => {
-  throw new ErroHttp(status, mensagem);
-};
-
-const RE_DATA = /^\d{4}-\d{2}-\d{2}$/;
 const RE_MES = /^\d{4}-\d{2}$/;
 
 function mesValido(mes) {
   const m = mes || hoje().slice(0, 7);
   if (!RE_MES.test(m)) erro(400, 'Mês inválido, use AAAA-MM');
   return m;
-}
-
-/**
- * Converte o valor digitado em centavos. Aceita: 12.5, "12,50", "R$ 1.234,56",
- * "1.234" (mil duzentos e trinta e quatro), "15.000", "32.50".
- */
-export function paraCentavos(v) {
-  if (typeof v === 'number') return Math.round(v * 100);
-  let s = String(v ?? '').replace(/[R$\s]/g, '');
-  if (s.includes(',')) {
-    s = s.replace(/\./g, '').replace(',', '.'); // 1.234,56 -> 1234.56
-  } else if (/^\d{1,3}(\.\d{3})+$/.test(s)) {
-    s = s.replace(/\./g, ''); // 15.000 -> 15000 (ponto de milhar)
-  }
-  const n = Number(s);
-  if (!Number.isFinite(n)) return NaN;
-  return Math.round(n * 100);
-}
-
-function textoCurto(v, max = 120) {
-  return String(v ?? '').trim().slice(0, max);
-}
-
-/** Valida e normaliza um lançamento vindo do app. */
-function normalizarLancamento(b, env) {
-  const tipo = b.tipo === 'receita' ? 'receita' : 'gasto';
-  const data = b.data || hoje();
-  if (!RE_DATA.test(data)) erro(400, 'Data inválida, use AAAA-MM-DD');
-  const valor = paraCentavos(b.valor);
-  if (!(valor > 0)) erro(400, 'Informe um valor maior que zero');
-
-  const lista = tipo === 'receita' ? CATEGORIAS_RECEITA : CATEGORIAS;
-  const categoria = lista.includes(b.categoria) ? b.categoria : 'Outros';
-  const quem = pessoas(env).includes(b.quem) ? b.quem : '';
-  const pagamento = tipo === 'gasto' && PAGAMENTOS.includes(b.pagamento) ? b.pagamento : '';
-  const origem = ['manual', 'foto', 'audio', 'texto'].includes(b.origem) ? b.origem : 'manual';
-  const cartao = tipo === 'gasto' ? textoCurto(b.cartao, 40) : '';
-  const cartaoId = tipo === 'gasto' && Number(b.cartao_id) > 0 ? Number(b.cartao_id) : null;
-  if (categoria === CAT_CARTAO && !cartao && !cartaoId) erro(400, 'Diga de qual cartão é a fatura');
-  // fatura nova começa como "a pagar"; o resto já nasce pago
-  // null = não informado (na edição mantém o que já estava)
-  const pago = b.pago === undefined || b.pago === null ? null : b.pago ? 1 : 0;
-
-  return {
-    tipo,
-    data,
-    descricao: textoCurto(b.descricao) || (categoria === CAT_CARTAO && cartao ? `Fatura ${cartao}` : ''),
-    categoria,
-    valor,
-    quem,
-    pagamento: categoria === CAT_CARTAO ? '' : pagamento,
-    origem,
-    cartao,
-    cartaoId,
-    pago,
-  };
-}
-
-async function idDoCartao(db, l) {
-  if (l.cartaoId) return l.cartaoId;
-  if (l.cartao) return resolverCartao(db, l.cartao);
-  return null;
 }
 
 function normalizarCartao(b) {
@@ -118,16 +47,6 @@ function normalizarFixa(b) {
   if (dia !== null && !(Number.isInteger(dia) && dia >= 1 && dia <= 31)) erro(400, 'Dia de vencimento inválido');
   const categoria = CATEGORIAS.includes(b.categoria) ? b.categoria : 'Contas da casa';
   return { nome, categoria, valor, dia_vencimento: dia, ativa: b.ativa === false ? 0 : 1 };
-}
-
-/** Compara o PIN sem vazar tempo. */
-function pinConfere(recebido, esperado) {
-  if (!esperado || !recebido) return false;
-  const a = new TextEncoder().encode(recebido);
-  const b = new TextEncoder().encode(esperado);
-  let dif = a.length ^ b.length;
-  for (let i = 0; i < Math.max(a.length, b.length); i++) dif |= (a[i] ?? 0) ^ (b[i] ?? 0);
-  return dif === 0;
 }
 
 // ---------- rotas ----------
@@ -191,21 +110,8 @@ async function api(req, env, url) {
 
   if (pathname === '/api/lancamentos' && metodo === 'POST') {
     const corpo = await req.json().catch(() => erro(400, 'JSON inválido'));
-    const itens = (Array.isArray(corpo) ? corpo : [corpo]).slice(0, 30).map((b) => normalizarLancamento(b, env));
-    for (const l of itens) {
-      l.cartaoId = await idDoCartao(db, l);
-      if (l.pago === null) l.pago = l.categoria === CAT_CARTAO ? 0 : 1;
-    }
-    const stmt = db.prepare(
-      `INSERT INTO lancamentos (tipo, data, descricao, categoria, valor, quem, pagamento, origem, cartao_id, pago)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) RETURNING id`
-    );
-    const res = await db.batch(
-      itens.map((l) =>
-        stmt.bind(l.tipo, l.data, l.descricao, l.categoria, l.valor, l.quem, l.pagamento, l.origem, l.cartaoId, l.pago)
-      )
-    );
-    return json(res.map((r) => r.results[0]), 201);
+    const ids = await salvarLancamentos(env, Array.isArray(corpo) ? corpo : [corpo]);
+    return json(ids.map((id) => ({ id })), 201);
   }
 
   let m = pathname.match(/^\/api\/lancamentos\/(\d+)$/);
@@ -322,6 +228,19 @@ async function api(req, env, url) {
     return json({ ok: true });
   }
 
+  // ----- Telegram -----
+  if (pathname === '/api/telegram' && metodo === 'GET') {
+    return json(await telegramStatus(env));
+  }
+  if (pathname === '/api/telegram/conectar' && metodo === 'POST') {
+    if (!env.TELEGRAM_TOKEN) erro(503, 'Falta cadastrar o segredo TELEGRAM_TOKEN no Cloudflare.');
+    try {
+      return json(await telegramConectar(env, url.origin));
+    } catch (e) {
+      erro(502, e.message);
+    }
+  }
+
   // ----- IA: foto, áudio ou texto viram rascunho de lançamento -----
   if (pathname === '/api/ia/extrair' && metodo === 'POST') {
     const form = await req.formData().catch(() => erro(400, 'Envie como formulário'));
@@ -361,8 +280,9 @@ async function api(req, env, url) {
 }
 
 export default {
-  async fetch(req, env) {
+  async fetch(req, env, ctx) {
     const url = new URL(req.url);
+    if (url.pathname === '/telegram/webhook') return telegramWebhook(req, env, ctx);
     // Se o service worker ainda não estiver ativo, o "Compartilhar" chega aqui: volta pro app
     if (url.pathname === '/compartilhar') return Response.redirect(new URL('/', url), 303);
     if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(req);

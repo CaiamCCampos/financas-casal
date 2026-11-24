@@ -720,6 +720,7 @@ function abrirConfig() {
   $('#cfg-ia').textContent = ia.texto_e_foto
     ? `Leitura por IA ligada (${ia.motor}): foto, áudio e texto.`
     : 'Leitura por IA desligada. Dá para lançar à mão normalmente.';
+  atualizarTelegram();
   dlg.onclose = () => {
     if (dlg.returnValue === 'sair') return sair();
     const quem = $('#cfg-quem').value;
@@ -733,6 +734,50 @@ function abrirConfig() {
   dlg.showModal();
 }
 $('#btn-config').addEventListener('click', abrirConfig);
+
+async function atualizarTelegram() {
+  const st = $('#tg-status');
+  const btn = $('#tg-conectar');
+  const abrir = $('#tg-abrir');
+  btn.hidden = true;
+  abrir.hidden = true;
+  try {
+    const t = await api('/api/telegram');
+    if (!t.configurado) {
+      st.textContent = 'Ainda não configurado: falta o segredo TELEGRAM_TOKEN no Cloudflare.';
+      return;
+    }
+    if (t.bot) {
+      abrir.href = `https://t.me/${t.bot}`;
+      abrir.hidden = false;
+    }
+    const quem = t.pessoas?.length ? ` Entraram: ${t.pessoas.join(', ')}.` : ' Ninguém entrou ainda: mande /entrar e o PIN para o robô.';
+    if (t.conectado) {
+      st.textContent = `Conectado como @${t.bot}.${quem}${t.erro_recente ? ` Último erro: ${t.erro_recente}` : ''}`;
+      btn.textContent = 'Reconectar';
+    } else {
+      st.textContent = `Robô @${t.bot || '?'} encontrado. Toque em Conectar para ligar ao app.`;
+      btn.textContent = 'Conectar';
+    }
+    btn.hidden = false;
+  } catch (err) {
+    st.textContent = err.message;
+  }
+}
+
+$('#tg-conectar').addEventListener('click', async () => {
+  const btn = $('#tg-conectar');
+  btn.disabled = true;
+  try {
+    const r = await api('/api/telegram/conectar', { metodo: 'POST' });
+    aviso(`Robô @${r.bot} conectado ✔`);
+    await atualizarTelegram();
+  } catch (err) {
+    aviso(err.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 async function baixar(mes, pessoa) {
   aviso('Gerando a planilha…');

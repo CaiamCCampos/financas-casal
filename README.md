@@ -14,6 +14,16 @@ App web instalável no celular para lançar gastos e receitas do casal **por fot
   - *Do mês*: Resumo (sempre as mesmas linhas: totais, todas as categorias, cada pessoa), Lançamentos e Contas fixas.
   - *Completa*: aba Mês a mês (uma coluna por mês, com Total e Média) para comparar os meses, mais todos os lançamentos.
 
+## Robô do Telegram
+
+Mande foto, PDF, mensagem de voz ou texto para o robô e ele lança direto, com botão **Desfazer**.
+Comandos: `/resumo`, `/planilha`, `/relatorio`, `/desfazer`, `/ajuda`.
+
+1. No Telegram, fale com **@BotFather** → `/newbot` → escolha um nome. Ele te dá um **token**.
+2. No Cloudflare, cadastre o token como segredo `TELEGRAM_TOKEN` (Worker → Settings → Variables and Secrets).
+3. No app: ⚙️ → **Robô do Telegram** → **Conectar**.
+4. Cada um abre o robô e manda `/entrar` + o PIN (a mensagem com o PIN é apagada na hora) e escolhe quem é.
+
 ## Como funciona
 
 ```
@@ -30,6 +40,8 @@ Celular (app web / PWA)  ──►  Cloudflare Worker (/api)  ──►  D1 (ban
 | `src/index.js` | a API: lançamentos, resumo, contas fixas, exportação |
 | `src/ia.js` | leitura de foto, áudio e texto |
 | `src/config.js` | categorias e formas de pagamento |
+| `src/telegram.js` | robô do Telegram (webhook, comandos, lançamento direto) |
+| `src/lancamentos.js` | validação e gravação de lançamentos (app e robô) |
 | `src/calculo.js` | regras de cálculo (totais, cartões, contas fixas) usadas no app e nas planilhas |
 | `src/planilha.js` / `src/xlsx.js` | geração das planilhas Excel |
 | `migrations/` | estrutura do banco |

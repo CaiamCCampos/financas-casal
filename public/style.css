@@ -234,3 +234,7 @@ dialog h3 { margin: 0 0 4px; }
 #exportar-pessoas:empty { display: none; }
 #dlg-pessoa .barras { margin: 8px 0; max-height: 50vh; overflow: auto; }
 #lista-cartoes-vazia { color: var(--suave); }
+
+.telegram { margin: 4px 0 0; padding: 12px; }
+.telegram .dica { margin: 6px 0 8px; }
+.telegram .acoes { margin-top: 0; }
