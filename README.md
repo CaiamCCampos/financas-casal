@@ -8,7 +8,9 @@ App web instalável no celular para lançar gastos e receitas do casal **por fot
 - Tudo aparece como **rascunho para conferir** antes de salvar. Nada entra sem confirmação.
 - **Resumo do mês**: receitas, despesas, saldo, gastos por categoria e por pessoa.
 - **Contas fixas**: valor e vencimento de cada uma, com marcação de "paga" mês a mês.
-- **Exportar CSV**: abre direto no Excel ou no Google Sheets.
+- **Planilhas Excel com layout fixo** (aba Resumo do app):
+  - *Do mês*: Resumo (sempre as mesmas linhas: totais, todas as categorias, cada pessoa), Lançamentos e Contas fixas.
+  - *Completa*: aba Mês a mês (uma coluna por mês, com Total e Média) para comparar os meses, mais todos os lançamentos.
 
 ## Como funciona
 
@@ -26,6 +28,7 @@ Celular (app web / PWA)  ──►  Cloudflare Worker (/api)  ──►  D1 (ban
 | `src/index.js` | a API: lançamentos, resumo, contas fixas, exportação |
 | `src/ia.js` | leitura de foto, áudio e texto |
 | `src/config.js` | categorias e formas de pagamento |
+| `src/planilha.js` / `src/xlsx.js` | geração das planilhas Excel |
 | `migrations/` | estrutura do banco |
 
 Valores ficam em **centavos** no banco, para não ter erro de arredondamento.

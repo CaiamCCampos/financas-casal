@@ -576,12 +576,28 @@ function abrirConfig() {
 $('#btn-config').addEventListener('click', abrirConfig);
 
 async function baixar(mes) {
+  aviso('Gerando a planilha…');
   try {
-    const blob = await api(`/api/exportar.csv${mes ? `?mes=${mes}` : ''}`);
+    const blob = await api(`/api/exportar.xlsx${mes ? `?mes=${mes}` : ''}`);
+    const nome = `financas-${mes || 'completo'}.xlsx`;
+    const arquivo = new File([blob], nome, {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    // No celular, abre o menu para salvar ou mandar (WhatsApp, e-mail, Drive)
+    if (navigator.canShare?.({ files: [arquivo] })) {
+      try {
+        await navigator.share({ files: [arquivo], title: nome });
+        return;
+      } catch (e) {
+        if (e.name === 'AbortError') return;
+      }
+    }
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `financas-${mes || 'tudo'}.csv`;
+    a.href = URL.createObjectURL(arquivo);
+    a.download = nome;
+    document.body.append(a);
     a.click();
+    a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   } catch (err) {
     aviso(err.message);
@@ -589,6 +605,10 @@ async function baixar(mes) {
 }
 $('#cfg-exportar').addEventListener('click', (e) => { e.preventDefault(); baixar(estado.mes); });
 $('#cfg-exportar-tudo').addEventListener('click', (e) => { e.preventDefault(); baixar(''); });
+$('#aba-resumo').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-exportar]');
+  if (b) baixar(b.dataset.exportar === 'mes' ? estado.mes : '');
+});
 
 // ---------- navegação ----------
 $('#abas').addEventListener('click', (e) => {

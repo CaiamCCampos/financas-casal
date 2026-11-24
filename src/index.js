@@ -1,5 +1,6 @@
 import { CATEGORIAS, CATEGORIAS_RECEITA, PAGAMENTOS, pessoas, hoje } from './config.js';
 import { extrair } from './ia.js';
+import { planilhaDoMes, planilhaCompleta } from './planilha.js';
 
 // ---------- utilitários ----------
 
@@ -36,11 +37,18 @@ function intervalo(mes) {
   return [`${mes}-01`, `${prox}-01`];
 }
 
-/** Aceita 12.5, "12,50", "R$ 1.234,56" e devolve centavos. */
-function paraCentavos(v) {
+/**
+ * Converte o valor digitado em centavos. Aceita: 12.5, "12,50", "R$ 1.234,56",
+ * "1.234" (mil duzentos e trinta e quatro), "15.000", "32.50".
+ */
+export function paraCentavos(v) {
   if (typeof v === 'number') return Math.round(v * 100);
   let s = String(v ?? '').replace(/[R$\s]/g, '');
-  if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
+  if (s.includes(',')) {
+    s = s.replace(/\./g, '').replace(',', '.'); // 1.234,56 -> 1234.56
+  } else if (/^\d{1,3}(\.\d{3})+$/.test(s)) {
+    s = s.replace(/\./g, ''); // 15.000 -> 15000 (ponto de milhar)
+  }
   const n = Number(s);
   if (!Number.isFinite(n)) return NaN;
   return Math.round(n * 100);
@@ -103,9 +111,9 @@ async function resumo(env, mes) {
       `SELECT categoria, SUM(valor) AS total FROM (
          SELECT categoria, valor FROM lancamentos WHERE tipo='gasto' AND data >= ?1 AND data < ?2
          UNION ALL
-         SELECT categoria, valor FROM contas_fixas WHERE ativa=1
+         SELECT categoria, valor FROM contas_fixas WHERE ativa=1 AND substr(criado_em,1,7) <= ?3
        ) GROUP BY categoria HAVING total > 0 ORDER BY total DESC`
-    ).bind(ini, fim),
+    ).bind(ini, fim, mes),
     db.prepare(
       `SELECT quem,
          SUM(CASE WHEN tipo='receita' THEN valor ELSE 0 END) AS recebeu,
@@ -116,7 +124,7 @@ async function resumo(env, mes) {
       `SELECT COALESCE(SUM(f.valor),0) AS total,
               COALESCE(SUM(CASE WHEN p.conta_id IS NOT NULL THEN f.valor ELSE 0 END),0) AS pagas
        FROM contas_fixas f LEFT JOIN fixas_pagas p ON p.conta_id=f.id AND p.mes=?1
-       WHERE f.ativa=1`
+       WHERE f.ativa=1 AND substr(f.criado_em,1,7) <= ?1`
     ).bind(mes),
   ]);
 
@@ -221,7 +229,7 @@ async function api(req, env, url) {
       .prepare(
         `SELECT f.*, CASE WHEN p.conta_id IS NULL THEN 0 ELSE 1 END AS paga
          FROM contas_fixas f LEFT JOIN fixas_pagas p ON p.conta_id=f.id AND p.mes=?1
-         WHERE f.ativa=1 ORDER BY COALESCE(f.dia_vencimento, 99), f.nome`
+         WHERE f.ativa=1 AND substr(f.criado_em,1,7) <= ?1 ORDER BY COALESCE(f.dia_vencimento, 99), f.nome`
       )
       .bind(mes)
       .all();
@@ -268,6 +276,19 @@ async function api(req, env, url) {
     const r = await extrair(env, form);
     if (r.erro) return json({ erro: r.erro }, r.status || 500);
     return json(r);
+  }
+
+  // ----- exportar planilha Excel (layout fixo) -----
+  if (pathname === '/api/exportar.xlsx' && metodo === 'GET') {
+    const mes = searchParams.get('mes');
+    const dados = mes ? await planilhaDoMes(env, mesValido(mes)) : await planilhaCompleta(env);
+    return new Response(dados, {
+      headers: {
+        'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'content-disposition': `attachment; filename="financas-${mes || 'completo'}.xlsx"`,
+        'cache-control': 'no-store',
+      },
+    });
   }
 
   // ----- exportar CSV (abre no Excel / Google Sheets) -----
