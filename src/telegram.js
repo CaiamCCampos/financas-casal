@@ -386,6 +386,24 @@ async function botao(env, q) {
   return fim('');
 }
 
+// ---------- aviso vindo de fora (atalho do iPhone) ----------
+
+/** Manda uma mensagem para o Telegram da pessoa, com botão Desfazer. Ignora se ela não entrou no robô. */
+export async function avisarNoTelegram(env, pessoa, texto, ids) {
+  if (!env.TELEGRAM_TOKEN) return;
+  const u = await env.DB.prepare('SELECT * FROM telegram_usuarios WHERE pessoa=?1 ORDER BY criado_em DESC LIMIT 1')
+    .bind(pessoa)
+    .first();
+  if (!u) return;
+  await env.DB.prepare('UPDATE telegram_usuarios SET ultimos=?1 WHERE telegram_id=?2').bind(JSON.stringify(ids), u.telegram_id).run();
+  await tg(env, 'sendMessage', {
+    chat_id: u.chat_id,
+    text: texto,
+    disable_web_page_preview: true,
+    reply_markup: { inline_keyboard: [[{ text: '↩️ Desfazer', callback_data: `desf:${ids.join(',')}` }]] },
+  });
+}
+
 // ---------- resumo ----------
 
 async function enviarResumo(env, chat, pessoa) {

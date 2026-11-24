@@ -3,6 +3,7 @@ import { extrair } from './ia.js';
 import { ErroHttp, erro, pinConfere } from './erros.js';
 import { paraCentavos, textoCurto, prepararLancamento, salvarLancamentos } from './lancamentos.js';
 import { webhook as telegramWebhook, conectar as telegramConectar, status as telegramStatus } from './telegram.js';
+import { receberDoAtalho } from './atalho.js';
 import { planilhaDoMes, planilhaCompleta, relatorioPessoa } from './planilha.js';
 import {
   intervalo,
@@ -289,6 +290,14 @@ async function api(req, env, url) {
     // some da lista, mas os lançamentos antigos continuam com ela nos relatórios
     await db.prepare('UPDATE categorias SET ativa=0 WHERE id=?1').bind(atual.id).run();
     return json({ ok: true });
+  }
+
+  // ----- Atalho do iPhone (menu Compartilhar) -----
+  if (pathname === '/api/atalho' && metodo === 'POST') {
+    const form = await req.formData().catch(() => null);
+    const texto = form ? await receberDoAtalho(env, form) : '⚠️ O atalho precisa enviar como Formulário.';
+    // sempre 200 com texto: o Atalho mostra isso como notificação
+    return new Response(texto, { headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' } });
   }
 
   // ----- Telegram -----

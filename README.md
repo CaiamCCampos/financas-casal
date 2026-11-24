@@ -18,6 +18,12 @@ App web instalável no celular para lançar gastos e receitas do casal **por fot
   - *Do mês*: Resumo (sempre as mesmas linhas: totais, todas as categorias, cada pessoa), Lançamentos e Contas fixas.
   - *Completa*: aba Mês a mês (uma coluna por mês, com Total e Média) para comparar os meses, mais todos os lançamentos.
 
+## Atalho do iPhone: "Enviar para Finanças"
+
+No comprovante do Pix (ou qualquer print/PDF), toque em **Compartilhar → Enviar para Finanças**: o sistema lê, lança e mostra uma notificação. Também avisa no Telegram com botão Desfazer. Comprovante enviado duas vezes em 10 minutos não é lançado de novo.
+
+O atalho faz um `POST /api/atalho` (Formulário) com o cabeçalho `x-pin` e os campos `arquivo` (imagem em JPEG) e `quem` (Caiam ou Milena). A resposta é um texto curto para a notificação.
+
 ## Robô do Telegram
 
 Mande foto, PDF, mensagem de voz ou texto para o robô e ele lança direto, com botão **Desfazer**.
@@ -44,6 +50,7 @@ Celular (app web / PWA)  ──►  Cloudflare Worker (/api)  ──►  D1 (ban
 | `src/index.js` | a API: lançamentos, resumo, contas fixas, exportação |
 | `src/ia.js` | leitura de foto, áudio e texto |
 | `src/config.js` | categorias e formas de pagamento |
+| `src/atalho.js` | entrada do Atalho do iPhone (comprovante pelo menu Compartilhar) |
 | `src/telegram.js` | robô do Telegram (webhook, comandos, lançamento direto) |
 | `src/lancamentos.js` | validação e gravação de lançamentos (app e robô) |
 | `src/calculo.js` | regras de cálculo (totais, cartões, contas fixas) usadas no app e nas planilhas |

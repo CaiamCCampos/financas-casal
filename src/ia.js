@@ -35,7 +35,7 @@ Extraia os lançamentos da mensagem, foto, comprovante (Pix, TED, boleto, cartã
 
 Regras:
 - tipo: "gasto" ou "receita" (salário, adiantamento, pagamento recebido, Pix recebido).
-- Em comprovante de transferência/Pix: se quem enviou o dinheiro for o casal, é gasto (descricao = quem recebeu); se o casal recebeu, é receita.
+- Comprovante de Pix: pagamento "Pix". Em comprovante de transferência/Pix: se quem enviou o dinheiro for o casal, é gasto (descricao = quem recebeu); se o casal recebeu, é receita.
 - data: a data que aparecer no comprovante ou que a pessoa disser ("ontem", "sexta"). Sem data, use hoje.
 - valor: número em reais com ponto decimal. Em nota fiscal ou cupom, use o TOTAL PAGO (com descontos), não cada item.
 - descricao: curta, como a pessoa falaria (ex.: "Mercado Assaí", "Uber para o trabalho", "iFood - pizza").
