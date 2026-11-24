@@ -1,6 +1,7 @@
 import { CATEGORIAS, CATEGORIAS_RECEITA, PAGAMENTOS, pessoas, hoje } from './config.js';
 
 const LIMITE_IMAGEM = 5 * 1024 * 1024; // 5 MB (o app já reduz a foto antes de enviar)
+const LIMITE_PDF = 5 * 1024 * 1024; // comprovantes em PDF costumam ter poucos KB
 const LIMITE_AUDIO = 10 * 1024 * 1024; // ~10 MB, alguns minutos de áudio
 const TIPOS_IMAGEM = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
@@ -24,11 +25,12 @@ function instrucoes(env, quemEnviou) {
   return `Você registra gastos e receitas de um casal brasileiro num app de finanças.
 Hoje é ${hoje()} (fuso de São Paulo). Quem está enviando: ${quemEnviou || 'não informado'}.
 
-Extraia os lançamentos da mensagem, foto ou transcrição de áudio e responda SOMENTE com JSON, sem texto em volta, neste formato:
+Extraia os lançamentos da mensagem, foto, comprovante (Pix, TED, boleto, cartão) ou transcrição de áudio e responda SOMENTE com JSON, sem texto em volta, neste formato:
 {"itens":[{"tipo":"gasto","data":"AAAA-MM-DD","descricao":"...","categoria":"...","valor":12.34,"pagamento":"...","quem":"..."}],"observacao":"..."}
 
 Regras:
 - tipo: "gasto" ou "receita" (salário, adiantamento, pagamento recebido, Pix recebido).
+- Em comprovante de transferência/Pix: se quem enviou o dinheiro for o casal, é gasto (descricao = quem recebeu); se o casal recebeu, é receita.
 - data: a data que aparecer no comprovante ou que a pessoa disser ("ontem", "sexta"). Sem data, use hoje.
 - valor: número em reais com ponto decimal. Em nota fiscal ou cupom, use o TOTAL PAGO (com descontos), não cada item.
 - descricao: curta, como a pessoa falaria (ex.: "Mercado Assaí", "Uber para o trabalho", "iFood - pizza").
@@ -55,13 +57,19 @@ function lerJSON(texto) {
 }
 
 /** Claude (pago, mais preciso). Usado só se existir o segredo ANTHROPIC_API_KEY. */
-async function viaClaude(env, { texto, imagem }, quem) {
-  const conteudo = imagem
-    ? [
-        { type: 'image', source: { type: 'base64', media_type: imagem.tipo, data: imagem.base64 } },
-        { type: 'text', text: texto },
-      ]
-    : texto;
+async function viaClaude(env, { texto, imagem, pdf }, quem) {
+  let conteudo = texto;
+  if (imagem) {
+    conteudo = [
+      { type: 'image', source: { type: 'base64', media_type: imagem.tipo, data: imagem.base64 } },
+      { type: 'text', text: texto },
+    ];
+  } else if (pdf) {
+    conteudo = [
+      { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: paraBase64(pdf) } },
+      { type: 'text', text: texto },
+    ];
+  }
   const resp = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -85,8 +93,25 @@ async function viaClaude(env, { texto, imagem }, quem) {
 }
 
 /** Workers AI do Cloudflare (gratuito dentro da cota diária). */
-async function viaWorkersAI(env, { texto, imagem }, quem) {
+async function pdfParaTexto(env, pdf) {
+  try {
+    const [r] = await env.AI.toMarkdown([{ name: 'comprovante.pdf', blob: new Blob([pdf], { type: 'application/pdf' }) }]);
+    return String(r?.data || '').trim().slice(0, 8000);
+  } catch (e) {
+    console.error('toMarkdown', e);
+    return '';
+  }
+}
+
+async function viaWorkersAI(env, { texto, imagem, pdf }, quem) {
   if (!env.AI) throw new ErroIA(503, 'A IA do Cloudflare não está ligada (binding AI).');
+  if (pdf) {
+    const conteudoPdf = await pdfParaTexto(env, pdf);
+    if (!conteudoPdf) {
+      throw new ErroIA(422, 'Não consegui ler esse PDF. Tire um print do comprovante e anexe a imagem.');
+    }
+    texto = `${texto}\n\nConteúdo do comprovante (PDF):\n${conteudoPdf}`;
+  }
   const conteudo = imagem
     ? [
         { type: 'text', text: texto },
@@ -171,8 +196,17 @@ export async function extrair(env, form) {
     const arquivo = form.get('arquivo');
     if (!arquivo || typeof arquivo === 'string') throw new ErroIA(400, 'Nenhum arquivo enviado.');
 
-    if (tipo === 'foto') {
-      if (!TIPOS_IMAGEM.includes(arquivo.type)) throw new ErroIA(400, 'Formato de imagem não suportado.');
+    if ((tipo === 'foto' || tipo === 'arquivo') && arquivo.type === 'application/pdf') {
+      if (arquivo.size > LIMITE_PDF) throw new ErroIA(413, 'PDF grande demais.');
+      const pdf = await arquivo.arrayBuffer();
+      const texto = legenda || 'Registre o lançamento deste comprovante.';
+      return { origem: 'foto', ...limpar(env, await chamarIA(env, { texto, pdf }, quem)) };
+    }
+
+    if (tipo === 'foto' || tipo === 'arquivo') {
+      if (!TIPOS_IMAGEM.includes(arquivo.type)) {
+        throw new ErroIA(400, 'Formato não suportado. Envie uma imagem (foto ou print) ou um PDF.');
+      }
       if (arquivo.size > LIMITE_IMAGEM) throw new ErroIA(413, 'Foto grande demais.');
       const imagem = { tipo: arquivo.type, base64: paraBase64(await arquivo.arrayBuffer()) };
       const texto = legenda || 'Registre o lançamento desta imagem (comprovante, nota ou print).';

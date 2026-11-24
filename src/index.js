@@ -311,6 +311,8 @@ async function api(req, env, url) {
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
+    // Se o service worker ainda não estiver ativo, o "Compartilhar" chega aqui: volta pro app
+    if (url.pathname === '/compartilhar') return Response.redirect(new URL('/', url), 303);
     if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(req);
     try {
       return await api(req, env, url);

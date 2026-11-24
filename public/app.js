@@ -111,6 +111,7 @@ async function iniciar() {
   montarFormManual();
   atualizarMes();
   if (!estado.quem) abrirConfig();
+  lerCompartilhado();
 }
 
 // ---------- formulário de lançamento (reutilizado) ----------
@@ -219,17 +220,54 @@ async function reduzirImagem(arquivo) {
   }
 }
 
-$('#input-foto').addEventListener('change', async (e) => {
-  const arquivo = e.target.files[0];
-  e.target.value = '';
+/** Foto, print ou PDF de comprovante viram rascunho. */
+async function processarArquivo(arquivo) {
   if (!arquivo) return;
-  processando('Preparando a foto…');
-  const img = await reduzirImagem(arquivo);
   const form = new FormData();
-  form.append('tipo', 'foto');
-  form.append('arquivo', img, 'foto.jpg');
-  enviarParaIA(form, 'Lendo a foto…');
-});
+  form.append('tipo', 'arquivo');
+  if (arquivo.type === 'application/pdf') {
+    form.append('arquivo', arquivo, 'comprovante.pdf');
+    return enviarParaIA(form, 'Lendo o comprovante…');
+  }
+  if (!arquivo.type.startsWith('image/')) return aviso('Envie uma imagem ou um PDF.');
+  processando('Preparando a imagem…');
+  form.append('arquivo', await reduzirImagem(arquivo), 'foto.jpg');
+  enviarParaIA(form, 'Lendo a imagem…');
+}
+
+for (const id of ['#input-camera', '#input-anexo']) {
+  $(id).addEventListener('change', (e) => {
+    const arquivo = e.target.files[0];
+    e.target.value = '';
+    processarArquivo(arquivo);
+  });
+}
+
+/** Arquivo recebido pelo menu Compartilhar do celular (ver sw.js). */
+async function lerCompartilhado() {
+  if (!location.search.includes('compartilhado')) return;
+  history.replaceState(null, '', '/');
+  try {
+    const cache = await caches.open('compartilhado');
+    const resp = await cache.match('/compartilhado/arquivo');
+    const texto = await cache.match('/compartilhado/texto');
+    await cache.delete('/compartilhado/arquivo');
+    await cache.delete('/compartilhado/texto');
+    if (resp) {
+      const blob = await resp.blob();
+      return processarArquivo(new File([blob], 'compartilhado', { type: resp.headers.get('content-type') || blob.type }));
+    }
+    const t = texto ? (await texto.text()).trim() : '';
+    if (t) {
+      const form = new FormData();
+      form.append('tipo', 'texto');
+      form.append('texto', t);
+      enviarParaIA(form, 'Entendendo…');
+    }
+  } catch {
+    aviso('Não consegui abrir o que foi compartilhado.');
+  }
+}
 
 $('#btn-texto').addEventListener('click', () => {
   const f = $('#form-texto');

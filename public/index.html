@@ -40,16 +40,21 @@
     <main>
       <!-- LANÇAR -->
       <section class="aba" id="aba-lancar">
+        <p class="dica">Nota, comprovante do Pix, print do iFood ou do Uber: tudo vira lançamento.</p>
         <div class="captura">
-          <label class="cap-btn" for="input-foto">
-            <span class="cap-ico">📷</span><span>Foto</span>
+          <label class="cap-btn" for="input-camera">
+            <span class="cap-ico">📷</span><span>Câmera</span>
           </label>
-          <input id="input-foto" type="file" accept="image/*" hidden>
+          <input id="input-camera" type="file" accept="image/*" capture="environment" hidden>
+          <label class="cap-btn" for="input-anexo">
+            <span class="cap-ico">📎</span><span>Anexar</span>
+          </label>
+          <input id="input-anexo" type="file" accept="image/*,application/pdf" hidden>
           <button class="cap-btn" id="btn-audio" type="button">
             <span class="cap-ico">🎤</span><span id="audio-rotulo">Áudio</span>
           </button>
           <button class="cap-btn" id="btn-texto" type="button">
-            <span class="cap-ico">✍️</span><span>Texto</span>
+            <span class="cap-ico">✍️</span><span>Escrever</span>
           </button>
         </div>
 

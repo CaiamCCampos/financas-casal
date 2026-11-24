@@ -85,14 +85,14 @@ main { padding: 16px 16px calc(96px + env(safe-area-inset-bottom)); max-width: 6
 #btn-nova-fixa { margin-top: 12px; }
 .dica { color: var(--suave); font-size: .9rem; margin: 0 4px 12px; }
 
-.captura { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 12px; }
+.captura { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
 .cap-btn {
-  display: grid; justify-items: center; gap: 6px; padding: 18px 4px;
+  display: grid; justify-items: center; gap: 6px; padding: 16px 2px;
   background: var(--cartao); border: 1px solid var(--linha); border-radius: var(--raio);
-  font-weight: 600; font-size: 1rem; color: var(--texto); cursor: pointer; user-select: none;
+  font-weight: 600; font-size: .9rem; color: var(--texto); cursor: pointer; user-select: none;
 }
 .cap-btn:active { transform: scale(.97); }
-.cap-ico { font-size: 2rem; line-height: 1; }
+.cap-ico { font-size: 1.8rem; line-height: 1; }
 .cap-btn.gravando { background: var(--perigo); color: #fff; border-color: var(--perigo); animation: pulso 1.2s infinite; }
 @keyframes pulso { 50% { opacity: .75; } }
 
