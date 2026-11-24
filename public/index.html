@@ -88,19 +88,23 @@
         </div>
         <div class="cartao">
           <div class="linha-sep"><span>Gastos do dia a dia</span><strong id="k-variaveis"></strong></div>
+          <div class="linha-sep"><span>Faturas de cartão</span><strong id="k-faturas"></strong></div>
           <div class="linha-sep"><span>Contas fixas</span><strong id="k-fixas"></strong></div>
           <div class="progresso"><div id="k-fixas-barra"></div></div>
           <small id="k-fixas-txt"></small>
+          <p class="dica nota" id="k-nao-somados" hidden></p>
         </div>
         <h2 class="secao">Por categoria</h2>
         <ul class="barras" id="por-categoria"></ul>
         <h2 class="secao">Por pessoa</h2>
+        <p class="dica">Toque em uma pessoa para ver onde foi o dinheiro.</p>
         <ul class="lista" id="por-pessoa"></ul>
         <h2 class="secao">Planilhas</h2>
         <div class="exportar">
           <button class="btn" type="button" data-exportar="mes">📊 Planilha do mês</button>
           <button class="btn" type="button" data-exportar="tudo">📈 Completa, mês a mês</button>
         </div>
+        <div class="exportar" id="exportar-pessoas"></div>
       </section>
 
       <!-- EXTRATO -->
@@ -115,6 +119,12 @@
 
       <!-- CONTAS FIXAS -->
       <section class="aba" id="aba-fixas" hidden>
+        <h2 class="secao primeira">Cartões de crédito</h2>
+        <p class="dica">Diga no áudio: “a fatura do Inter veio 1.250”. Marque quando pagar.</p>
+        <ul class="lista" id="cartoes"></ul>
+        <button class="btn" id="btn-novo-cartao" type="button">+ Novo cartão</button>
+
+        <h2 class="secao">Contas fixas</h2>
         <p class="dica">Marque quando pagar. O total entra todo mês no resumo.</p>
         <ul class="lista" id="fixas"></ul>
         <button class="btn" id="btn-nova-fixa" type="button">+ Nova conta fixa</button>
@@ -125,7 +135,7 @@
       <button data-aba="lancar" class="ativo"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Lançar</button>
       <button data-aba="resumo"><svg viewBox="0 0 24 24"><path d="M5 19V11M12 19V5M19 19v-6"/></svg>Resumo</button>
       <button data-aba="extrato"><svg viewBox="0 0 24 24"><path d="M5 7h14M5 12h14M5 17h9"/></svg>Extrato</button>
-      <button data-aba="fixas"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></svg>Fixas</button>
+      <button data-aba="fixas"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></svg>Contas</button>
     </nav>
   </div>
 
@@ -148,6 +158,40 @@
         <button class="btn perigo" value="excluir" id="fixa-excluir" type="submit">Excluir</button>
         <button class="btn" value="cancelar" formnovalidate type="submit">Cancelar</button>
         <button class="btn primario" value="salvar" type="submit">Salvar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Cartão -->
+  <dialog id="dlg-cartao">
+    <form method="dialog" id="form-cartao">
+      <h3 id="cartao-titulo">Cartão</h3>
+      <label>Nome (ex.: Inter, Nubank) <input name="nome" required maxlength="40"></label>
+      <label>Como controlar
+        <select name="controle">
+          <option value="fatura">Pela fatura (recomendado)</option>
+          <option value="compras">Compra a compra</option>
+        </select>
+      </label>
+      <p class="dica" id="cartao-explica"></p>
+      <label>Vence dia <input name="dia_vencimento" type="number" min="1" max="31"></label>
+      <div class="acoes">
+        <button class="btn perigo" value="excluir" id="cartao-excluir" type="submit">Excluir</button>
+        <button class="btn" value="cancelar" formnovalidate type="submit">Cancelar</button>
+        <button class="btn primario" value="salvar" type="submit">Salvar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Detalhe de uma pessoa -->
+  <dialog id="dlg-pessoa">
+    <form method="dialog">
+      <h3 id="pessoa-titulo"></h3>
+      <p class="dica" id="pessoa-sub"></p>
+      <ul class="barras" id="pessoa-categorias"></ul>
+      <div class="acoes">
+        <button class="btn" type="button" id="pessoa-baixar">📊 Relatório (Excel)</button>
+        <button class="btn primario" value="ok" type="submit">Fechar</button>
       </div>
     </form>
   </dialog>
@@ -186,6 +230,10 @@
       <div class="duas">
         <label>Quem <select name="quem"></select></label>
         <label class="so-gasto">Pagamento <select name="pagamento"></select></label>
+      </div>
+      <div class="campo-cartao" hidden>
+        <label>Cartão <select name="cartao"></select></label>
+        <label class="cartao-novo" hidden>Nome do cartão novo <input name="cartao_novo" maxlength="40" placeholder="Ex.: C6"></label>
       </div>
     </div>
   </template>

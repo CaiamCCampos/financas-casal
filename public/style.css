@@ -223,3 +223,14 @@ dialog h3 { margin: 0 0 4px; }
 .exportar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
 .exportar .btn { font-size: .9rem; padding: 12px 8px; }
 #dlg-config .btn + .btn { margin-top: 0; }
+
+.secao.primeira { margin-top: 4px; }
+.nota { margin: 8px 0 0; font-size: .85rem; }
+.campo-cartao { display: grid; gap: 10px; }
+.selo { display: inline-block; font-size: .72rem; padding: 1px 6px; border-radius: 99px; background: var(--fundo); color: var(--suave); border: 1px solid var(--linha); margin-left: 4px; vertical-align: 1px; }
+.selo.alerta { color: var(--gasto); border-color: currentColor; }
+.lista .acao-dir { display: grid; justify-items: end; gap: 2px; }
+#exportar-pessoas { margin-top: 8px; }
+#exportar-pessoas:empty { display: none; }
+#dlg-pessoa .barras { margin: 8px 0; max-height: 50vh; overflow: auto; }
+#lista-cartoes-vazia { color: var(--suave); }

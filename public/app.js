@@ -142,6 +142,27 @@ function criarFormLanc(destino, v = {}) {
   $('[name=descricao]', f).value = v.descricao || '';
   opcoes($('[name=quem]', f), c.pessoas, v.quem || estado.quem);
   opcoes($('[name=pagamento]', f), c.pagamentos, v.pagamento, '—');
+
+  // Cartão: aparece para fatura ou compra no crédito
+  const selCartao = $('[name=cartao]', f);
+  const nomes = c.cartoes.map((x) => x.nome);
+  if (v.cartao && !nomes.includes(v.cartao)) nomes.push(v.cartao); // cartão novo dito no áudio
+  selCartao.innerHTML =
+    '<option value="">—</option>' +
+    nomes.map((n) => `<option${n === v.cartao ? ' selected' : ''}>${esc(n)}</option>`).join('') +
+    '<option value="__novo">+ Outro cartão…</option>';
+  const atualizarCartao = () => {
+    const tipo = f.dataset.tipo;
+    const cat = $('[name=categoria]', f).value;
+    const pag = $('[name=pagamento]', f).value;
+    const mostra = tipo === 'gasto' && (cat === c.cat_cartao || pag === 'Crédito');
+    $('.campo-cartao', f).hidden = !mostra;
+    $('.cartao-novo', f).hidden = !(mostra && selCartao.value === '__novo');
+    if (cat === c.cat_cartao) $('[name=pagamento]', f).closest('label').style.visibility = 'hidden';
+    else $('[name=pagamento]', f).closest('label').style.visibility = '';
+  };
+  f.addEventListener('change', atualizarCartao);
+  atualizarCartao();
   return f;
 }
 
@@ -157,8 +178,19 @@ function lerFormLanc(f, origem = 'manual') {
     categoria: $('[name=categoria]', f).value,
     quem: $('[name=quem]', f).value,
     pagamento: tipo === 'gasto' ? $('[name=pagamento]', f).value : '',
+    cartao: lerCartao(f, tipo),
     origem,
   };
+}
+
+function lerCartao(f, tipo) {
+  if (tipo !== 'gasto' || $('.campo-cartao', f).hidden) return '';
+  const v = $('[name=cartao]', f).value;
+  const cartao = v === '__novo' ? $('[name=cartao_novo]', f).value.trim() : v;
+  if (!cartao && $('[name=categoria]', f).value === estado.config.cat_cartao) {
+    throw new Error('Escolha de qual cartão é a fatura.');
+  }
+  return cartao;
 }
 
 function montarFormManual() {
@@ -362,6 +394,7 @@ function mostrarRascunho(r) {
       await api('/api/lancamentos', { metodo: 'POST', corpo });
       card.remove();
       aviso(corpo.length > 1 ? `${corpo.length} lançamentos salvos ✔` : 'Lançado ✔');
+      if (corpo.some((x) => x.cartao)) await recarregarConfig();
       recarregar();
     } catch (err) {
       aviso(err.message);
@@ -376,10 +409,22 @@ let lancamentosMes = [];
 
 function itemLanc(l) {
   const sinal = l.tipo === 'receita' ? '+' : '−';
-  const detalhes = [l.categoria, l.quem, l.pagamento].filter(Boolean).join(' · ');
+  const detalhes = [l.categoria === estado.config.cat_cartao ? 'Fatura' : l.categoria, l.quem, l.cartao || l.pagamento]
+    .filter(Boolean)
+    .join(' · ');
+  const naoSoma = l.tipo === 'gasto' && naoSomaNoTotal(l);
   return `<li class="clicavel" data-id="${l.id}">
-    <div class="info"><strong>${esc(l.descricao || l.categoria)}</strong><small>${esc(detalhes)}</small></div>
+    <div class="info"><strong>${esc(l.descricao || l.categoria)}</strong><small>${esc(detalhes)}${
+      naoSoma ? ' <span class="selo">já na fatura</span>' : ''
+    }</small></div>
     <span class="valor ${l.tipo}">${sinal} ${reais(l.valor)}</span></li>`;
+}
+
+/** Mesma regra do servidor: compra no cartão "pela fatura" não soma de novo. */
+function naoSomaNoTotal(l) {
+  if (!l.cartao_id || !l.cartao_controle) return false;
+  const fatura = l.categoria === estado.config.cat_cartao;
+  return fatura ? l.cartao_controle !== 'fatura' : l.cartao_controle !== 'compras';
 }
 
 function renderExtrato() {
@@ -451,20 +496,27 @@ function editarLanc(l) {
 }
 
 // ---------- resumo ----------
+let resumoAtual = null;
+
 async function carregarResumo() {
   const r = await api(`/api/resumo?mes=${estado.mes}`);
+  resumoAtual = r;
   $('#k-receitas').textContent = reais(r.receitas);
   $('#k-despesas').textContent = reais(r.despesas);
   const saldo = $('#k-saldo');
   saldo.textContent = reais(r.saldo);
   saldo.classList.toggle('negativo', r.saldo < 0);
   $('#k-variaveis').textContent = reais(r.gastos_dia_a_dia);
+  $('#k-faturas').textContent = reais(r.faturas);
   $('#k-fixas').textContent = reais(r.contas_fixas);
   const pct = r.contas_fixas ? Math.round((r.contas_fixas_pagas / r.contas_fixas) * 100) : 0;
   $('#k-fixas-barra').style.width = pct + '%';
   $('#k-fixas-txt').textContent = r.contas_fixas
-    ? `${reais(r.contas_fixas_pagas)} pagos de ${reais(r.contas_fixas)} (${pct}%)`
-    : 'Cadastre os valores na aba Fixas.';
+    ? `Contas fixas: ${reais(r.contas_fixas_pagas)} pagos de ${reais(r.contas_fixas)} (${pct}%)`
+    : 'Cadastre os valores das contas fixas na aba Contas.';
+  const ns = $('#k-nao-somados');
+  ns.hidden = !r.nao_somados;
+  ns.textContent = `${reais(r.nao_somados)} em compras no cartão não somam de novo: já estão na fatura.`;
 
   const maior = Math.max(1, ...r.por_categoria.map((c) => c.total));
   $('#por-categoria').innerHTML = r.por_categoria
@@ -476,10 +528,38 @@ async function carregarResumo() {
 
   $('#por-pessoa').innerHTML = r.por_pessoa
     .map(
-      (p) => `<li><div class="info"><strong>${esc(p.quem || 'Sem nome')}</strong>
+      (p, i) => `<li class="clicavel" data-pessoa="${i}"><div class="info"><strong>${esc(p.quem || 'Sem nome')}</strong>
       <small>Recebeu ${reais(p.recebeu)}</small></div><span class="valor gasto">− ${reais(p.gastou)}</span></li>`
     )
     .join('');
+
+  $('#exportar-pessoas').innerHTML = estado.config.pessoas
+    .map((p) => `<button class="btn" type="button" data-relatorio="${esc(p)}">👤 Relatório ${esc(p)}</button>`)
+    .join('');
+}
+
+$('#por-pessoa').addEventListener('click', (e) => {
+  const li = e.target.closest('[data-pessoa]');
+  if (li) abrirPessoa(resumoAtual.por_pessoa[Number(li.dataset.pessoa)]);
+});
+
+function abrirPessoa(p) {
+  const dlg = $('#dlg-pessoa');
+  $('#pessoa-titulo').textContent = p.quem || 'Sem nome';
+  $('#pessoa-sub').textContent = `${nomeMes(estado.mes)} · gastou ${reais(p.gastou)} · recebeu ${reais(p.recebeu)}`;
+  const maior = Math.max(1, ...p.categorias.map((c) => c.total));
+  $('#pessoa-categorias').innerHTML = p.categorias.length
+    ? p.categorias
+        .map(
+          (c) => `<li><div class="topo-barra"><span>${esc(c.categoria)} <small class="selo">${c.qtd}</small></span>
+          <b>${reais(c.total)}</b></div><div class="trilho"><div style="width:${(c.total / maior) * 100}%"></div></div></li>`
+        )
+        .join('')
+    : '';
+  const btn = $('#pessoa-baixar');
+  btn.hidden = !p.quem;
+  btn.onclick = () => baixar(estado.mes, p.quem);
+  dlg.showModal();
 }
 
 // ---------- contas fixas ----------
@@ -553,6 +633,85 @@ function editarFixa(conta) {
   dlg.showModal();
 }
 
+// ---------- cartões ----------
+let cartoes = [];
+
+async function carregarCartoes() {
+  cartoes = await api(`/api/cartoes?mes=${estado.mes}`);
+  $('#cartoes').innerHTML = cartoes
+    .map((c) => {
+      const temFatura = c.fatura !== null;
+      const detalhe = [
+        c.dia_vencimento ? `Vence dia ${c.dia_vencimento}` : null,
+        c.controle === 'compras' ? 'compra a compra' : null,
+        c.qtd_compras ? `${c.qtd_compras} compra(s): ${reais(c.compras)}` : null,
+      ]
+        .filter(Boolean)
+        .join(' · ');
+      return `<li class="${temFatura && c.fatura_paga ? 'paga' : ''}" data-id="${c.id}">
+        <input type="checkbox" class="check" ${c.fatura_paga ? 'checked' : ''} ${temFatura ? '' : 'disabled'}
+          aria-label="Fatura paga">
+        <div class="info clicavel"><strong>${esc(c.nome)}</strong><small>${esc(detalhe || 'Toque para editar')}</small></div>
+        <span class="valor">${temFatura ? reais(c.fatura) : '<small>sem fatura</small>'}</span></li>`;
+    })
+    .join('');
+}
+
+$('#cartoes').addEventListener('click', async (e) => {
+  const li = e.target.closest('li[data-id]');
+  if (!li) return;
+  const c = cartoes.find((x) => x.id === Number(li.dataset.id));
+  if (e.target.matches('.check')) {
+    try {
+      await api(`/api/cartoes/${c.id}/pago`, { metodo: 'POST', corpo: { mes: estado.mes, pago: e.target.checked } });
+      li.classList.toggle('paga', e.target.checked);
+    } catch (err) {
+      e.target.checked = !e.target.checked;
+      aviso(err.message);
+    }
+    return;
+  }
+  editarCartao(c);
+});
+
+$('#btn-novo-cartao').addEventListener('click', () => editarCartao(null));
+
+const EXPLICA_CONTROLE = {
+  fatura: 'A fatura entra no total do mês. Compras que vocês lançarem nesse cartão aparecem só como detalhe e não somam de novo.',
+  compras: 'Cada compra lançada nesse cartão entra no total. A fatura serve só para conferir o valor e o vencimento.',
+};
+
+function editarCartao(c) {
+  const dlg = $('#dlg-cartao');
+  const form = $('#form-cartao');
+  $('#cartao-titulo').textContent = c ? 'Editar cartão' : 'Novo cartão';
+  form.nome.value = c?.nome || '';
+  form.controle.value = c?.controle || 'fatura';
+  form.dia_vencimento.value = c?.dia_vencimento || '';
+  $('#cartao-explica').textContent = EXPLICA_CONTROLE[form.controle.value];
+  form.controle.onchange = () => ($('#cartao-explica').textContent = EXPLICA_CONTROLE[form.controle.value]);
+  $('#cartao-excluir').hidden = !c;
+  dlg.onclose = async () => {
+    const corpo = { nome: form.nome.value, controle: form.controle.value, dia_vencimento: form.dia_vencimento.value || null };
+    try {
+      if (dlg.returnValue === 'salvar') {
+        await api(c ? `/api/cartoes/${c.id}` : '/api/cartoes', { metodo: c ? 'PUT' : 'POST', corpo });
+        aviso('Salvo ✔');
+      } else if (dlg.returnValue === 'excluir') {
+        if (!confirm(`Remover o cartão ${c.nome}? Os lançamentos antigos continuam.`)) return;
+        await api(`/api/cartoes/${c.id}`, { metodo: 'DELETE' });
+        aviso('Removido');
+      } else return;
+      await recarregarConfig();
+      recarregar();
+    } catch (err) {
+      aviso(err.message);
+    }
+  };
+  dlg.returnValue = '';
+  dlg.showModal();
+}
+
 // ---------- configurações ----------
 function abrirConfig() {
   const dlg = $('#dlg-config');
@@ -575,11 +734,14 @@ function abrirConfig() {
 }
 $('#btn-config').addEventListener('click', abrirConfig);
 
-async function baixar(mes) {
+async function baixar(mes, pessoa) {
   aviso('Gerando a planilha…');
   try {
-    const blob = await api(`/api/exportar.xlsx${mes ? `?mes=${mes}` : ''}`);
-    const nome = `financas-${mes || 'completo'}.xlsx`;
+    const qs = new URLSearchParams();
+    if (mes) qs.set('mes', mes);
+    if (pessoa) qs.set('pessoa', pessoa);
+    const blob = await api(`/api/exportar.xlsx${qs.toString() ? `?${qs}` : ''}`);
+    const nome = pessoa ? `relatorio-${pessoa.toLowerCase()}-${mes}.xlsx` : `financas-${mes || 'completo'}.xlsx`;
     const arquivo = new File([blob], nome, {
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     });
@@ -608,6 +770,8 @@ $('#cfg-exportar-tudo').addEventListener('click', (e) => { e.preventDefault(); b
 $('#aba-resumo').addEventListener('click', (e) => {
   const b = e.target.closest('[data-exportar]');
   if (b) baixar(b.dataset.exportar === 'mes' ? estado.mes : '');
+  const r = e.target.closest('[data-relatorio]');
+  if (r) baixar(estado.mes, r.dataset.relatorio);
 });
 
 // ---------- navegação ----------
@@ -632,9 +796,19 @@ function atualizarMes() {
   recarregar();
 }
 
+async function recarregarConfig() {
+  try {
+    const cfg = await api('/api/config');
+    estado.config = cfg;
+    montarFormManual();
+  } catch {
+    /* mantém a anterior */
+  }
+}
+
 async function recarregar() {
   try {
-    await Promise.all([carregarLancamentos(), carregarResumo(), carregarFixas()]);
+    await Promise.all([carregarLancamentos(), carregarResumo(), carregarFixas(), carregarCartoes()]);
   } catch (err) {
     aviso(err.message);
   }

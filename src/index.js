@@ -1,6 +1,14 @@
-import { CATEGORIAS, CATEGORIAS_RECEITA, PAGAMENTOS, pessoas, hoje } from './config.js';
+import { CATEGORIAS, CATEGORIAS_RECEITA, PAGAMENTOS, CAT_CARTAO, pessoas, hoje } from './config.js';
 import { extrair } from './ia.js';
-import { planilhaDoMes, planilhaCompleta } from './planilha.js';
+import { planilhaDoMes, planilhaCompleta, relatorioPessoa } from './planilha.js';
+import {
+  intervalo,
+  SQL_LANCAMENTOS,
+  carregarMes,
+  resumir,
+  resumirCartoes,
+  resolverCartao,
+} from './calculo.js';
 
 // ---------- utilitários ----------
 
@@ -28,13 +36,6 @@ function mesValido(mes) {
   const m = mes || hoje().slice(0, 7);
   if (!RE_MES.test(m)) erro(400, 'Mês inválido, use AAAA-MM');
   return m;
-}
-
-/** Primeiro dia do mês e primeiro dia do mês seguinte. */
-function intervalo(mes) {
-  const [a, m] = mes.split('-').map(Number);
-  const prox = m === 12 ? `${a + 1}-01` : `${a}-${String(m + 1).padStart(2, '0')}`;
-  return [`${mes}-01`, `${prox}-01`];
 }
 
 /**
@@ -71,8 +72,41 @@ function normalizarLancamento(b, env) {
   const quem = pessoas(env).includes(b.quem) ? b.quem : '';
   const pagamento = tipo === 'gasto' && PAGAMENTOS.includes(b.pagamento) ? b.pagamento : '';
   const origem = ['manual', 'foto', 'audio', 'texto'].includes(b.origem) ? b.origem : 'manual';
+  const cartao = tipo === 'gasto' ? textoCurto(b.cartao, 40) : '';
+  const cartaoId = tipo === 'gasto' && Number(b.cartao_id) > 0 ? Number(b.cartao_id) : null;
+  if (categoria === CAT_CARTAO && !cartao && !cartaoId) erro(400, 'Diga de qual cartão é a fatura');
+  // fatura nova começa como "a pagar"; o resto já nasce pago
+  // null = não informado (na edição mantém o que já estava)
+  const pago = b.pago === undefined || b.pago === null ? null : b.pago ? 1 : 0;
 
-  return { tipo, data, descricao: textoCurto(b.descricao), categoria, valor, quem, pagamento, origem };
+  return {
+    tipo,
+    data,
+    descricao: textoCurto(b.descricao) || (categoria === CAT_CARTAO && cartao ? `Fatura ${cartao}` : ''),
+    categoria,
+    valor,
+    quem,
+    pagamento: categoria === CAT_CARTAO ? '' : pagamento,
+    origem,
+    cartao,
+    cartaoId,
+    pago,
+  };
+}
+
+async function idDoCartao(db, l) {
+  if (l.cartaoId) return l.cartaoId;
+  if (l.cartao) return resolverCartao(db, l.cartao);
+  return null;
+}
+
+function normalizarCartao(b) {
+  const nome = textoCurto(b.nome, 40);
+  if (!nome) erro(400, 'Informe o nome do cartão');
+  const controle = b.controle === 'compras' ? 'compras' : 'fatura';
+  const dia = b.dia_vencimento ? Number(b.dia_vencimento) : null;
+  if (dia !== null && !(Number.isInteger(dia) && dia >= 1 && dia <= 31)) erro(400, 'Dia de vencimento inválido');
+  return { nome, controle, dia_vencimento: dia };
 }
 
 function normalizarFixa(b) {
@@ -99,51 +133,13 @@ function pinConfere(recebido, esperado) {
 // ---------- rotas ----------
 
 async function resumo(env, mes) {
-  const [ini, fim] = intervalo(mes);
-  const db = env.DB;
-
-  const [totais, porCategoria, porPessoa, fixas] = await db.batch([
-    db.prepare(
-      `SELECT tipo, COALESCE(SUM(valor),0) AS total FROM lancamentos
-       WHERE data >= ?1 AND data < ?2 GROUP BY tipo`
-    ).bind(ini, fim),
-    db.prepare(
-      `SELECT categoria, SUM(valor) AS total FROM (
-         SELECT categoria, valor FROM lancamentos WHERE tipo='gasto' AND data >= ?1 AND data < ?2
-         UNION ALL
-         SELECT categoria, valor FROM contas_fixas WHERE ativa=1 AND substr(criado_em,1,7) <= ?3
-       ) GROUP BY categoria HAVING total > 0 ORDER BY total DESC`
-    ).bind(ini, fim, mes),
-    db.prepare(
-      `SELECT quem,
-         SUM(CASE WHEN tipo='receita' THEN valor ELSE 0 END) AS recebeu,
-         SUM(CASE WHEN tipo='gasto' THEN valor ELSE 0 END) AS gastou
-       FROM lancamentos WHERE data >= ?1 AND data < ?2 GROUP BY quem`
-    ).bind(ini, fim),
-    db.prepare(
-      `SELECT COALESCE(SUM(f.valor),0) AS total,
-              COALESCE(SUM(CASE WHEN p.conta_id IS NOT NULL THEN f.valor ELSE 0 END),0) AS pagas
-       FROM contas_fixas f LEFT JOIN fixas_pagas p ON p.conta_id=f.id AND p.mes=?1
-       WHERE f.ativa=1 AND substr(f.criado_em,1,7) <= ?1`
-    ).bind(mes),
-  ]);
-
-  const t = Object.fromEntries(totais.results.map((r) => [r.tipo, r.total]));
-  const receitas = t.receita || 0;
-  const variaveis = t.gasto || 0;
-  const fixasTotal = fixas.results[0].total;
-  const despesas = variaveis + fixasTotal;
-
+  const { L, F, C } = await carregarMes(env, mes);
+  const r = resumir(env, L, F);
   return {
     mes,
-    receitas,
-    gastos_dia_a_dia: variaveis,
-    contas_fixas: fixasTotal,
-    contas_fixas_pagas: fixas.results[0].pagas,
-    despesas,
-    saldo: receitas - despesas,
-    por_categoria: porCategoria.results,
-    por_pessoa: porPessoa.results,
+    ...r,
+    por_categoria: r.por_categoria.filter((c) => c.total > 0).sort((a, b) => b.total - a.total),
+    cartoes: resumirCartoes(L, C),
   };
 }
 
@@ -168,6 +164,8 @@ async function api(req, env, url) {
       categorias_receita: CATEGORIAS_RECEITA,
       pagamentos: PAGAMENTOS,
       pessoas: pessoas(env),
+      cartoes: (await db.prepare('SELECT id, nome, controle FROM cartoes WHERE ativo=1 ORDER BY nome').all()).results,
+      cat_cartao: CAT_CARTAO,
       hoje: hoje(),
       ia: {
         texto_e_foto: Boolean(env.AI || env.ANTHROPIC_API_KEY),
@@ -185,7 +183,7 @@ async function api(req, env, url) {
   if (pathname === '/api/lancamentos' && metodo === 'GET') {
     const [ini, fim] = intervalo(mesValido(searchParams.get('mes')));
     const { results } = await db
-      .prepare(`SELECT * FROM lancamentos WHERE data >= ?1 AND data < ?2 ORDER BY data DESC, id DESC`)
+      .prepare(`${SQL_LANCAMENTOS} WHERE l.data >= ?1 AND l.data < ?2 ORDER BY l.data DESC, l.id DESC`)
       .bind(ini, fim)
       .all();
     return json(results);
@@ -194,12 +192,18 @@ async function api(req, env, url) {
   if (pathname === '/api/lancamentos' && metodo === 'POST') {
     const corpo = await req.json().catch(() => erro(400, 'JSON inválido'));
     const itens = (Array.isArray(corpo) ? corpo : [corpo]).slice(0, 30).map((b) => normalizarLancamento(b, env));
+    for (const l of itens) {
+      l.cartaoId = await idDoCartao(db, l);
+      if (l.pago === null) l.pago = l.categoria === CAT_CARTAO ? 0 : 1;
+    }
     const stmt = db.prepare(
-      `INSERT INTO lancamentos (tipo, data, descricao, categoria, valor, quem, pagamento, origem)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) RETURNING *`
+      `INSERT INTO lancamentos (tipo, data, descricao, categoria, valor, quem, pagamento, origem, cartao_id, pago)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) RETURNING id`
     );
     const res = await db.batch(
-      itens.map((l) => stmt.bind(l.tipo, l.data, l.descricao, l.categoria, l.valor, l.quem, l.pagamento, l.origem))
+      itens.map((l) =>
+        stmt.bind(l.tipo, l.data, l.descricao, l.categoria, l.valor, l.quem, l.pagamento, l.origem, l.cartaoId, l.pago)
+      )
     );
     return json(res.map((r) => r.results[0]), 201);
   }
@@ -207,12 +211,14 @@ async function api(req, env, url) {
   let m = pathname.match(/^\/api\/lancamentos\/(\d+)$/);
   if (m && metodo === 'PUT') {
     const l = normalizarLancamento(await req.json().catch(() => erro(400, 'JSON inválido')), env);
+    l.cartaoId = await idDoCartao(db, l);
     const r = await db
       .prepare(
-        `UPDATE lancamentos SET tipo=?1, data=?2, descricao=?3, categoria=?4, valor=?5, quem=?6, pagamento=?7
-         WHERE id=?8 RETURNING *`
+        `UPDATE lancamentos SET tipo=?1, data=?2, descricao=?3, categoria=?4, valor=?5, quem=?6, pagamento=?7,
+           cartao_id=?8, pago=COALESCE(?9, pago)
+         WHERE id=?10 RETURNING id`
       )
-      .bind(l.tipo, l.data, l.descricao, l.categoria, l.valor, l.quem, l.pagamento, Number(m[1]))
+      .bind(l.tipo, l.data, l.descricao, l.categoria, l.valor, l.quem, l.pagamento, l.cartaoId, l.pago, Number(m[1]))
       .first();
     if (!r) erro(404, 'Lançamento não encontrado');
     return json(r);
@@ -270,6 +276,52 @@ async function api(req, env, url) {
     return json({ ok: true });
   }
 
+  // ----- cartões -----
+  if (pathname === '/api/cartoes' && metodo === 'GET') {
+    const { L, C } = await carregarMes(env, mesValido(searchParams.get('mes')));
+    return json(resumirCartoes(L, C));
+  }
+  if (pathname === '/api/cartoes' && metodo === 'POST') {
+    const c = normalizarCartao(await req.json().catch(() => erro(400, 'JSON inválido')));
+    const existe = await db.prepare('SELECT id FROM cartoes WHERE nome = ?1 COLLATE NOCASE').bind(c.nome).first();
+    const r = existe
+      ? await db
+          .prepare('UPDATE cartoes SET ativo=1, controle=?1, dia_vencimento=?2 WHERE id=?3 RETURNING *')
+          .bind(c.controle, c.dia_vencimento, existe.id)
+          .first()
+      : await db
+          .prepare('INSERT INTO cartoes (nome, controle, dia_vencimento) VALUES (?1, ?2, ?3) RETURNING *')
+          .bind(c.nome, c.controle, c.dia_vencimento)
+          .first();
+    return json(r, 201);
+  }
+  m = pathname.match(/^\/api\/cartoes\/(\d+)$/);
+  if (m && metodo === 'PUT') {
+    const c = normalizarCartao(await req.json().catch(() => erro(400, 'JSON inválido')));
+    const r = await db
+      .prepare('UPDATE cartoes SET nome=?1, controle=?2, dia_vencimento=?3 WHERE id=?4 RETURNING *')
+      .bind(c.nome, c.controle, c.dia_vencimento, Number(m[1]))
+      .first()
+      .catch(() => erro(409, 'Já existe um cartão com esse nome'));
+    if (!r) erro(404, 'Cartão não encontrado');
+    return json(r);
+  }
+  if (m && metodo === 'DELETE') {
+    // só esconde: os lançamentos antigos continuam apontando para ele
+    await db.prepare('UPDATE cartoes SET ativo=0 WHERE id=?1').bind(Number(m[1])).run();
+    return json({ ok: true });
+  }
+  m = pathname.match(/^\/api\/cartoes\/(\d+)\/pago$/);
+  if (m && metodo === 'POST') {
+    const { mes, pago } = await req.json().catch(() => erro(400, 'JSON inválido'));
+    const [ini, fim] = intervalo(mesValido(mes));
+    await db
+      .prepare('UPDATE lancamentos SET pago=?1 WHERE cartao_id=?2 AND categoria=?3 AND data >= ?4 AND data < ?5')
+      .bind(pago ? 1 : 0, Number(m[1]), CAT_CARTAO, ini, fim)
+      .run();
+    return json({ ok: true });
+  }
+
   // ----- IA: foto, áudio ou texto viram rascunho de lançamento -----
   if (pathname === '/api/ia/extrair' && metodo === 'POST') {
     const form = await req.formData().catch(() => erro(400, 'Envie como formulário'));
@@ -281,47 +333,26 @@ async function api(req, env, url) {
   // ----- exportar planilha Excel (layout fixo) -----
   if (pathname === '/api/exportar.xlsx' && metodo === 'GET') {
     const mes = searchParams.get('mes');
-    const dados = mes ? await planilhaDoMes(env, mesValido(mes)) : await planilhaCompleta(env);
+    const pessoa = searchParams.get('pessoa');
+    let dados;
+    let nome;
+    if (pessoa) {
+      if (!pessoas(env).includes(pessoa)) erro(400, 'Pessoa inválida');
+      const mm = mesValido(mes);
+      dados = await relatorioPessoa(env, mm, pessoa);
+      nome = `relatorio-${pessoa.toLowerCase()}-${mm}`;
+    } else if (mes) {
+      dados = await planilhaDoMes(env, mesValido(mes));
+      nome = `financas-${mes}`;
+    } else {
+      dados = await planilhaCompleta(env);
+      nome = 'financas-completo';
+    }
     return new Response(dados, {
       headers: {
         'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        'content-disposition': `attachment; filename="financas-${mes || 'completo'}.xlsx"`,
+        'content-disposition': `attachment; filename="${encodeURIComponent(nome)}.xlsx"`,
         'cache-control': 'no-store',
-      },
-    });
-  }
-
-  // ----- exportar CSV (abre no Excel / Google Sheets) -----
-  if (pathname === '/api/exportar.csv' && metodo === 'GET') {
-    const mes = searchParams.get('mes');
-    const [ini, fim] = mes ? intervalo(mesValido(mes)) : ['0000-01-01', '9999-12-31'];
-    const { results } = await db
-      .prepare(`SELECT * FROM lancamentos WHERE data >= ?1 AND data < ?2 ORDER BY data, id`)
-      .bind(ini, fim)
-      .all();
-    const esc = (v) => {
-      const s = String(v ?? '');
-      // evita que o Excel interprete o texto como fórmula
-      const seguro = /^[=+\-@]/.test(s) ? `'${s}` : s;
-      return /[";\n]/.test(seguro) ? `"${seguro.replace(/"/g, '""')}"` : seguro;
-    };
-    const linhas = [['Data', 'Tipo', 'Descrição', 'Categoria', 'Valor', 'Quem', 'Pagamento']].concat(
-      results.map((r) => [
-        r.data.split('-').reverse().join('/'),
-        r.tipo === 'receita' ? 'Receita' : 'Gasto',
-        r.descricao,
-        r.categoria,
-        (r.valor / 100).toFixed(2).replace('.', ','),
-        r.quem,
-        r.pagamento,
-      ])
-    );
-    // ; e vírgula decimal = padrão do Excel em português
-    const csv = '﻿' + linhas.map((l) => l.map(esc).join(';')).join('\r\n');
-    return new Response(csv, {
-      headers: {
-        'content-type': 'text/csv; charset=utf-8',
-        'content-disposition': `attachment; filename="financas-${mes || 'tudo'}.csv"`,
       },
     });
   }

@@ -4,6 +4,7 @@
 
 import { criarXlsx, S, serialData, coluna } from './xlsx.js';
 import { CATEGORIAS, pessoas, hoje } from './config.js';
+import { carregarMes, resumir, resumirCartoes, soma, fixasDoMes, SQL_LANCAMENTOS, proxMes } from './calculo.js';
 
 const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
 const MESES_CURTOS = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
@@ -19,12 +20,32 @@ const mesCurto = (mes) => {
   return `${MESES_CURTOS[m - 1]}/${String(a).slice(2)}`;
 };
 const dataBR = (iso) => iso.split('-').reverse().join('/');
-const proxMes = (mes) => {
-  const [a, m] = mes.split('-').map(Number);
-  return m === 12 ? `${a + 1}-01` : `${a}-${String(m + 1).padStart(2, '0')}`;
-};
 
 // ---------- abas compartilhadas ----------
+
+const cab = (v, moeda) => ({ v, s: moeda ? S.cabecalhoMoeda : S.cabecalho });
+const titulo3 = (t, sub) => [
+  [{ v: t, s: S.titulo }],
+  [{ v: sub, s: S.negrito }],
+  [{ v: `Gerado em ${dataBR(hoje())}`, s: S.sutil }],
+];
+
+function abaCartoes(cartoes) {
+  const linhas = [[cab('Cartão'), cab('Controle'), cab('Vence dia'), cab('Fatura do mês', true), cab('Fatura paga'), cab('Compras lançadas', true)]];
+  for (const c of cartoes) {
+    linhas.push([
+      c.nome,
+      c.controle === 'compras' ? 'Compra a compra' : 'Pela fatura',
+      c.dia_vencimento || '',
+      c.fatura === null ? { v: 'Sem fatura', s: S.sutil } : { v: reais(c.fatura), s: S.moeda },
+      c.fatura === null ? '' : c.fatura_paga ? 'Sim' : 'Não',
+      { v: reais(c.compras), s: S.moeda },
+    ]);
+  }
+  linhas.push([]);
+  linhas.push([{ v: 'Pela fatura: a fatura entra no total; compras no cartão são só detalhe. Compra a compra: as compras entram; a fatura é só conferência.', s: S.sutil }]);
+  return { nome: 'Cartões', linhas, larguras: [18, 16, 10, 15, 11, 17], congelarLinhas: 1 };
+}
 
 function abaLancamentos(lancs, titulo) {
   const linhas = [
@@ -36,6 +57,8 @@ function abaLancamentos(lancs, titulo) {
       { v: 'Valor', s: S.cabecalhoMoeda },
       { v: 'Quem', s: S.cabecalho },
       { v: 'Pagamento', s: S.cabecalho },
+      { v: 'Cartão', s: S.cabecalho },
+      { v: 'Soma no total', s: S.cabecalho },
     ],
   ];
   for (const l of lancs) {
@@ -47,14 +70,16 @@ function abaLancamentos(lancs, titulo) {
       { v: reais(l.valor), s: S.moeda },
       l.quem || '',
       l.pagamento || '',
+      l.cartao || '',
+      l.tipo === 'receita' ? '' : soma(l) ? 'Sim' : 'Não (já na fatura)',
     ]);
   }
   return {
     nome: titulo,
     linhas,
-    larguras: [12, 10, 38, 18, 14, 12, 12],
+    larguras: [12, 10, 36, 18, 14, 11, 12, 12, 18],
     congelarLinhas: 1,
-    filtro: `A1:G${Math.max(linhas.length, 2)}`,
+    filtro: `A1:I${Math.max(linhas.length, 2)}`,
   };
 }
 
@@ -76,92 +101,122 @@ function abaFixas(fixas, comPagamento) {
 // ---------- planilha do mês ----------
 
 export async function planilhaDoMes(env, mes) {
-  const db = env.DB;
-  const ini = `${mes}-01`;
-  const fim = `${proxMes(mes)}-01`;
-  const ps = pessoas(env);
+  const { L, F, C } = await carregarMes(env, mes);
+  const r = resumir(env, L, F);
 
-  const [lancs, fixas] = await db.batch([
-    db.prepare('SELECT * FROM lancamentos WHERE data >= ?1 AND data < ?2 ORDER BY data, id').bind(ini, fim),
-    db
-      .prepare(
-        `SELECT f.*, CASE WHEN p.conta_id IS NULL THEN 0 ELSE 1 END AS paga
-         FROM contas_fixas f LEFT JOIN fixas_pagas p ON p.conta_id=f.id AND p.mes=?1
-         WHERE f.ativa=1 AND substr(f.criado_em,1,7) <= ?1 ORDER BY COALESCE(f.dia_vencimento, 99), f.nome`
-      )
-      .bind(mes),
-  ]);
-  const L = lancs.results;
-  const F = fixas.results;
-
-  const soma = (fn) => L.filter(fn).reduce((t, l) => t + l.valor, 0);
-  const receitas = soma((l) => l.tipo === 'receita');
-  const variaveis = soma((l) => l.tipo === 'gasto');
-  const fixasTotal = F.reduce((t, f) => t + f.valor, 0);
-  const fixasPagas = F.filter((f) => f.paga).reduce((t, f) => t + f.valor, 0);
-  const despesas = variaveis + fixasTotal;
-
-  // Linhas fixas: B5..B10
+  // Layout fixo: as linhas abaixo são sempre as mesmas, todo mês
   const linhas = [
-    [{ v: 'Finanças do Casal', s: S.titulo }],
-    [{ v: nomeMes(mes), s: S.negrito }],
-    [{ v: `Gerado em ${dataBR(hoje())}`, s: S.sutil }],
-    [{ v: 'Resumo', s: S.cabecalho }, { v: 'Valor', s: S.cabecalhoMoeda }],
-    ['Receitas', { v: reais(receitas), s: S.moeda }],
-    ['Gastos do dia a dia', { v: reais(variaveis), s: S.moeda }],
-    ['Contas fixas', { v: reais(fixasTotal), s: S.moeda }],
-    [{ v: 'Total de despesas', s: S.totalTexto }, { v: reais(despesas), f: 'B6+B7', s: S.totalMoeda }],
-    [{ v: 'Saldo do mês', s: S.destaqueTexto }, { v: reais(receitas - despesas), f: 'B5-B8', s: S.destaqueMoeda }],
-    ['Contas fixas já pagas', { v: reais(fixasPagas), s: S.moeda }],
+    ...titulo3('Finanças do Casal', nomeMes(mes)),
+    [cab('Resumo'), cab('Valor', true)],
+    ['Receitas', { v: reais(r.receitas), s: S.moeda }], // 5
+    ['Gastos do dia a dia', { v: reais(r.gastos_dia_a_dia), s: S.moeda }], // 6
+    ['Faturas de cartão', { v: reais(r.faturas), s: S.moeda }], // 7
+    ['Contas fixas', { v: reais(r.contas_fixas), s: S.moeda }], // 8
+    [{ v: 'Total de despesas', s: S.totalTexto }, { v: reais(r.despesas), f: 'B6+B7+B8', s: S.totalMoeda }], // 9
+    [{ v: 'Saldo do mês', s: S.destaqueTexto }, { v: reais(r.saldo), f: 'B5-B9', s: S.destaqueMoeda }], // 10
+    ['Contas fixas já pagas', { v: reais(r.contas_fixas_pagas), s: S.moeda }], // 11
+    [{ v: 'Compras já dentro das faturas', s: S.sutil }, { v: reais(r.nao_somados), s: S.moeda }], // 12
     [],
-    [
-      { v: 'Categoria', s: S.cabecalho },
-      { v: 'Dia a dia', s: S.cabecalhoMoeda },
-      { v: 'Contas fixas', s: S.cabecalhoMoeda },
-      { v: 'Total', s: S.cabecalhoMoeda },
-      { v: '% das despesas', s: S.cabecalhoMoeda },
-    ],
+    [cab('Categoria'), cab('Lançamentos', true), cab('Contas fixas', true), cab('Total', true), cab('% das despesas', true)],
   ];
-  const iniCat = linhas.length + 1; // linha 13
-  for (const cat of CATEGORIAS) {
-    const r = linhas.length + 1;
-    const dia = soma((l) => l.tipo === 'gasto' && l.categoria === cat);
-    const fx = F.filter((f) => f.categoria === cat).reduce((t, f) => t + f.valor, 0);
+  const iniCat = linhas.length + 1;
+  for (const c of r.por_categoria) {
+    const n = linhas.length + 1;
     linhas.push([
-      cat,
-      { v: reais(dia), s: S.moeda },
-      { v: reais(fx), s: S.moeda },
-      { v: reais(dia + fx), f: `B${r}+C${r}`, s: S.moedaNegrito },
-      { v: despesas ? (dia + fx) / despesas : 0, f: `IF($B$8=0,0,D${r}/$B$8)`, s: S.porcento },
+      c.categoria,
+      { v: reais(c.dia_a_dia), s: S.moeda },
+      { v: reais(c.fixas), s: S.moeda },
+      { v: reais(c.total), f: `B${n}+C${n}`, s: S.moedaNegrito },
+      { v: r.despesas ? c.total / r.despesas : 0, f: `IF($B$9=0,0,D${n}/$B$9)`, s: S.porcento },
     ]);
   }
   const fimCat = linhas.length;
   linhas.push([
     { v: 'Total', s: S.totalTexto },
-    { v: reais(variaveis), f: `SUM(B${iniCat}:B${fimCat})`, s: S.totalMoeda },
-    { v: reais(fixasTotal), f: `SUM(C${iniCat}:C${fimCat})`, s: S.totalMoeda },
-    { v: reais(despesas), f: `SUM(D${iniCat}:D${fimCat})`, s: S.totalMoeda },
+    { v: reais(r.gastos_dia_a_dia + r.faturas), f: `SUM(B${iniCat}:B${fimCat})`, s: S.totalMoeda },
+    { v: reais(r.contas_fixas), f: `SUM(C${iniCat}:C${fimCat})`, s: S.totalMoeda },
+    { v: reais(r.despesas), f: `SUM(D${iniCat}:D${fimCat})`, s: S.totalMoeda },
   ]);
   linhas.push([]);
-  linhas.push([
-    { v: 'Pessoa', s: S.cabecalho },
-    { v: 'Recebeu', s: S.cabecalhoMoeda },
-    { v: 'Gastou (dia a dia)', s: S.cabecalhoMoeda },
-  ]);
-  for (const p of ps) {
-    linhas.push([
-      p,
-      { v: reais(soma((l) => l.tipo === 'receita' && l.quem === p)), s: S.moeda },
-      { v: reais(soma((l) => l.tipo === 'gasto' && l.quem === p)), s: S.moeda },
-    ]);
+  linhas.push([cab('Pessoa'), cab('Recebeu', true), cab('Gastou', true)]);
+  for (const p of r.por_pessoa) {
+    linhas.push([p.quem || { v: 'Sem nome', s: S.sutil }, { v: reais(p.recebeu), s: S.moeda }, { v: reais(p.gastou), s: S.moeda }]);
   }
-  const semNome = soma((l) => !ps.includes(l.quem));
-  if (semNome) linhas.push([{ v: 'Sem nome', s: S.sutil }, '', { v: reais(semNome), s: S.moeda }]);
 
   return criarXlsx([
-    { nome: 'Resumo', linhas, larguras: [26, 15, 15, 15, 15] },
+    { nome: 'Resumo', linhas, larguras: [30, 15, 15, 15, 15] },
     abaLancamentos(L, 'Lançamentos'),
     abaFixas(F, true),
+    abaCartoes(resumirCartoes(L, C)),
+  ]);
+}
+
+// ---------- relatório de uma pessoa ----------
+
+export async function relatorioPessoa(env, mes, pessoa) {
+  const { L, F } = await carregarMes(env, mes);
+  const r = resumir(env, L, F);
+  const p = r.por_pessoa.find((x) => x.quem === pessoa) || { recebeu: 0, gastou: 0, categorias: [] };
+  const meus = L.filter((l) => l.quem === pessoa);
+  const gastosQueSomam = meus.filter((l) => l.tipo === 'gasto' && soma(l));
+
+  const linhas = [
+    ...titulo3(`Relatório de ${pessoa}`, nomeMes(mes)),
+    [cab('Resumo'), cab('Valor', true)],
+    ['Recebeu', { v: reais(p.recebeu), s: S.moeda }], // 5
+    [{ v: 'Gastou', s: S.totalTexto }, { v: reais(p.gastou), s: S.totalMoeda }], // 6
+    [{ v: 'Recebeu − gastou', s: S.destaqueTexto }, { v: reais(p.recebeu - p.gastou), f: 'B5-B6', s: S.destaqueMoeda }],
+    [{ v: 'As contas fixas são da casa e não entram aqui.', s: S.sutil }],
+    [],
+    [cab('Categoria'), cab('Valor', true), cab('Lançamentos', true), cab('% do que gastou', true)],
+  ];
+  const ini = linhas.length + 1;
+  for (const categoria of CATEGORIAS) {
+    const itens = gastosQueSomam.filter((l) => l.categoria === categoria);
+    const total = itens.reduce((t, l) => t + l.valor, 0);
+    const n = linhas.length + 1;
+    linhas.push([
+      categoria,
+      { v: reais(total), s: S.moeda },
+      itens.length,
+      { v: p.gastou ? total / p.gastou : 0, f: `IF($B$6=0,0,B${n}/$B$6)`, s: S.porcento },
+    ]);
+  }
+  const fim = linhas.length;
+  linhas.push([
+    { v: 'Total', s: S.totalTexto },
+    { v: reais(p.gastou), f: `SUM(B${ini}:B${fim})`, s: S.totalMoeda },
+    { v: gastosQueSomam.length, f: `SUM(C${ini}:C${fim})`, s: S.totalTexto },
+  ]);
+
+  const maiores = [...gastosQueSomam].sort((a, b) => b.valor - a.valor).slice(0, 5);
+  if (maiores.length) {
+    linhas.push([]);
+    linhas.push([cab('Maiores gastos'), cab('Valor', true), cab('Data'), cab('Categoria')]);
+    for (const l of maiores) {
+      linhas.push([l.descricao || l.categoria, { v: reais(l.valor), s: S.moeda }, { v: serialData(l.data), s: S.data }, l.categoria]);
+    }
+  }
+
+  const naFatura = meus.filter((l) => l.tipo === 'gasto' && !soma(l));
+  if (naFatura.length) {
+    linhas.push([]);
+    linhas.push([cab('Compras no cartão (já dentro da fatura)'), cab('Valor', true), cab('Data'), cab('Categoria'), cab('Cartão')]);
+    for (const l of naFatura) {
+      linhas.push([
+        l.descricao || l.categoria,
+        { v: reais(l.valor), s: S.moeda },
+        { v: serialData(l.data), s: S.data },
+        l.categoria,
+        l.cartao || '',
+      ]);
+    }
+    linhas.push([{ v: 'Essas compras não somam de novo no total: o valor delas já está na fatura do cartão.', s: S.sutil }]);
+  }
+
+  return criarXlsx([
+    { nome: 'Resumo', linhas, larguras: [34, 15, 13, 16, 12] },
+    abaLancamentos(meus, `Lançamentos de ${pessoa}`),
   ]);
 }
 
@@ -169,85 +224,80 @@ export async function planilhaDoMes(env, mes) {
 
 export async function planilhaCompleta(env) {
   const db = env.DB;
-  const ps = pessoas(env);
-  const [lancs, fixas] = await db.batch([
-    db.prepare('SELECT * FROM lancamentos ORDER BY data, id'),
+  const [lancs, fixas, cartoes] = await db.batch([
+    db.prepare(`${SQL_LANCAMENTOS} ORDER BY l.data, l.id`),
     db.prepare('SELECT * FROM contas_fixas WHERE ativa=1 ORDER BY COALESCE(dia_vencimento, 99), nome'),
+    db.prepare('SELECT * FROM cartoes ORDER BY nome'),
   ]);
   const L = lancs.results;
-  const F = fixas.results;
+  const Ftodas = fixas.results;
 
-  // meses do primeiro lançamento até o mês atual (máx. 36)
+  // meses do primeiro lançamento até o mês atual (ou o último lançamento, se for futuro)
   const atual = hoje().slice(0, 7);
   let primeiro = L.length ? L[0].data.slice(0, 7) : atual;
   if (primeiro > atual) primeiro = atual;
+  const ultimo = L.length && L[L.length - 1].data.slice(0, 7) > atual ? L[L.length - 1].data.slice(0, 7) : atual;
   const meses = [];
-  for (let m = primeiro; m <= atual && meses.length < 36; m = proxMes(m)) meses.push(m);
-  if (meses[meses.length - 1] !== atual) meses.push(atual);
-  const ultimoLanc = L.length ? L[L.length - 1].data.slice(0, 7) : atual;
-  if (ultimoLanc > atual) for (let m = proxMes(atual); m <= ultimoLanc && meses.length < 48; m = proxMes(m)) meses.push(m);
+  for (let m = primeiro; m <= ultimo && meses.length < 48; m = proxMes(m)) meses.push(m);
 
-  const porMes = (fn) => meses.map((m) => L.filter((l) => l.data.startsWith(m) && fn(l)).reduce((t, l) => t + l.valor, 0));
-  // conta fixa vale a partir do mês em que foi cadastrada
-  const fixasNoMes = (m, cat) =>
-    F.filter((f) => f.criado_em.slice(0, 7) <= m && (!cat || f.categoria === cat)).reduce((t, f) => t + f.valor, 0);
+  const porMes = meses.map((m) => {
+    const Lm = L.filter((l) => l.data.startsWith(m));
+    return { L: Lm, r: resumir(env, Lm, fixasDoMes(Ftodas, m)) };
+  });
 
   const nM = meses.length;
-  const primeiraCol = 'B';
   const ultimaCol = coluna(nM);
-
   const linhas = [
-    [{ v: 'Finanças do Casal — mês a mês', s: S.titulo }],
-    [{ v: `De ${nomeMes(meses[0])} a ${nomeMes(meses[nM - 1])}`, s: S.negrito }],
-    [{ v: `Gerado em ${dataBR(hoje())}. Contas fixas: valor cadastrado hoje, contado a partir do mês em que a conta foi criada.`, s: S.sutil }],
-    [{ v: 'Item', s: S.cabecalho }, ...meses.map((m) => ({ v: mesCurto(m), s: S.cabecalhoMoeda })), { v: 'Total', s: S.cabecalhoMoeda }, { v: 'Média', s: S.cabecalhoMoeda }],
+    ...titulo3('Finanças do Casal — mês a mês', `De ${nomeMes(meses[0])} a ${nomeMes(meses[nM - 1])}`),
+    [cab('Item'), ...meses.map((m) => cab(mesCurto(m), true)), cab('Total', true), cab('Média', true)],
   ];
+  linhas[2] = [{ v: `Gerado em ${dataBR(hoje())}. Contas fixas: valor atual, contado a partir do mês em que a conta foi criada.`, s: S.sutil }];
 
-  // adiciona uma linha com valores por mês + Total e Média por fórmula
   const linhaValores = (rotulo, valores, estiloRotulo, estiloValor = S.moeda, formulas) => {
     const r = linhas.length + 1;
     const total = valores.reduce((a, b) => a + b, 0);
     linhas.push([
       estiloRotulo ? { v: rotulo, s: estiloRotulo } : rotulo,
       ...valores.map((v, i) => ({ v: reais(v), s: estiloValor, f: formulas ? formulas(coluna(i + 1)) : undefined })),
-      { v: reais(total), f: `SUM(${primeiraCol}${r}:${ultimaCol}${r})`, s: S.moedaNegrito },
-      { v: reais(total / nM), f: `AVERAGE(${primeiraCol}${r}:${ultimaCol}${r})`, s: S.moeda },
+      { v: reais(total), f: `SUM(B${r}:${ultimaCol}${r})`, s: S.moedaNegrito },
+      { v: reais(total / nM), f: `AVERAGE(B${r}:${ultimaCol}${r})`, s: S.moeda },
     ]);
     return r;
   };
+  const secao = (t) => linhas.push([cab(t), ...meses.map(() => cab('')), cab(''), cab('')]);
+  const col = (fn) => porMes.map(fn);
 
-  const receitas = porMes((l) => l.tipo === 'receita');
-  const variaveis = porMes((l) => l.tipo === 'gasto');
-  const fixasArr = meses.map((m) => fixasNoMes(m));
-  const rRec = linhaValores('Receitas', receitas);
-  const rVar = linhaValores('Gastos do dia a dia', variaveis);
-  const rFix = linhaValores('Contas fixas', fixasArr);
-  const rDesp = linhaValores('Total de despesas', variaveis.map((v, i) => v + fixasArr[i]), S.totalTexto, S.totalMoeda, (c) => `${c}${rVar}+${c}${rFix}`);
-  linhaValores('Saldo do mês', receitas.map((v, i) => v - variaveis[i] - fixasArr[i]), S.destaqueTexto, S.destaqueMoeda, (c) => `${c}${rRec}-${c}${rDesp}`);
+  const rRec = linhaValores('Receitas', col((x) => x.r.receitas));
+  const rDia = linhaValores('Gastos do dia a dia', col((x) => x.r.gastos_dia_a_dia));
+  const rFat = linhaValores('Faturas de cartão', col((x) => x.r.faturas));
+  const rFix = linhaValores('Contas fixas', col((x) => x.r.contas_fixas));
+  const rDesp = linhaValores('Total de despesas', col((x) => x.r.despesas), S.totalTexto, S.totalMoeda, (c) => `${c}${rDia}+${c}${rFat}+${c}${rFix}`);
+  linhaValores('Saldo do mês', col((x) => x.r.saldo), S.destaqueTexto, S.destaqueMoeda, (c) => `${c}${rRec}-${c}${rDesp}`);
 
   linhas.push([]);
-  linhas.push([{ v: 'Gastos por categoria', s: S.cabecalho }, ...meses.map(() => ({ v: '', s: S.cabecalho })), { v: '', s: S.cabecalho }, { v: '', s: S.cabecalho }]);
-  for (const cat of CATEGORIAS) {
-    linhaValores(cat, porMes((l) => l.tipo === 'gasto' && l.categoria === cat).map((v, i) => v + fixasNoMes(meses[i], cat)));
+  secao('Gastos por categoria');
+  CATEGORIAS.forEach((cat, i) => linhaValores(cat, col((x) => x.r.por_categoria[i].total)));
+
+  const ps = pessoas(env);
+  linhas.push([]);
+  secao('Gastos por pessoa');
+  for (const p of ps) linhaValores(p, col((x) => x.r.por_pessoa.find((y) => y.quem === p)?.gastou || 0));
+  linhas.push([]);
+  secao('Receitas por pessoa');
+  for (const p of ps) linhaValores(p, col((x) => x.r.por_pessoa.find((y) => y.quem === p)?.recebeu || 0));
+
+  const comFatura = cartoes.results.filter((c) => L.some((l) => l.cartao_id === c.id));
+  if (comFatura.length) {
+    linhas.push([]);
+    secao('Faturas por cartão');
+    for (const c of comFatura) {
+      linhaValores(c.nome, col((x) => x.L.filter((l) => l.cartao_id === c.id && l.categoria === 'Cartão de crédito').reduce((t, l) => t + l.valor, 0)));
+    }
   }
 
-  linhas.push([]);
-  linhas.push([{ v: 'Gastos do dia a dia por pessoa', s: S.cabecalho }, ...meses.map(() => ({ v: '', s: S.cabecalho })), { v: '', s: S.cabecalho }, { v: '', s: S.cabecalho }]);
-  for (const p of ps) linhaValores(p, porMes((l) => l.tipo === 'gasto' && l.quem === p));
-
-  linhas.push([]);
-  linhas.push([{ v: 'Receitas por pessoa', s: S.cabecalho }, ...meses.map(() => ({ v: '', s: S.cabecalho })), { v: '', s: S.cabecalho }, { v: '', s: S.cabecalho }]);
-  for (const p of ps) linhaValores(p, porMes((l) => l.tipo === 'receita' && l.quem === p));
-
   return criarXlsx([
-    {
-      nome: 'Mês a mês',
-      linhas,
-      larguras: [30, ...meses.map(() => 13), 14, 13],
-      congelarLinhas: 4,
-      congelarColunas: 1,
-    },
+    { nome: 'Mês a mês', linhas, larguras: [30, ...meses.map(() => 13), 14, 13], congelarLinhas: 4, congelarColunas: 1 },
     abaLancamentos(L, 'Todos os lançamentos'),
-    abaFixas(F, false),
+    abaFixas(Ftodas, false),
   ]);
 }

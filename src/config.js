@@ -11,8 +11,12 @@ export const CATEGORIAS = [
   'Compras',
   'Assinaturas',
   'Educação',
+  'Cartão de crédito',
   'Outros',
 ];
+
+/** Categoria das faturas de cartão. */
+export const CAT_CARTAO = 'Cartão de crédito';
 
 export const CATEGORIAS_RECEITA = ['Salário', 'Adiantamento', 'Extra', 'Outros'];
 

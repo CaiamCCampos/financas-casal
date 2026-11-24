@@ -1,3 +1,4 @@
+import { chaveCartao } from './calculo.js';
 import { CATEGORIAS, CATEGORIAS_RECEITA, PAGAMENTOS, pessoas, hoje } from './config.js';
 
 const LIMITE_IMAGEM = 5 * 1024 * 1024; // 5 MB (o app já reduz a foto antes de enviar)
@@ -22,11 +23,12 @@ function paraBase64(buffer) {
 }
 
 function instrucoes(env, quemEnviou) {
+  const cartoes = (env._cartoes || []).join(', ') || 'nenhum cadastrado';
   return `Você registra gastos e receitas de um casal brasileiro num app de finanças.
 Hoje é ${hoje()} (fuso de São Paulo). Quem está enviando: ${quemEnviou || 'não informado'}.
 
 Extraia os lançamentos da mensagem, foto, comprovante (Pix, TED, boleto, cartão) ou transcrição de áudio e responda SOMENTE com JSON, sem texto em volta, neste formato:
-{"itens":[{"tipo":"gasto","data":"AAAA-MM-DD","descricao":"...","categoria":"...","valor":12.34,"pagamento":"...","quem":"..."}],"observacao":"..."}
+{"itens":[{"tipo":"gasto","data":"AAAA-MM-DD","descricao":"...","categoria":"...","valor":12.34,"pagamento":"...","quem":"...","cartao":""}],"observacao":"..."}
 
 Regras:
 - tipo: "gasto" ou "receita" (salário, adiantamento, pagamento recebido, Pix recebido).
@@ -37,6 +39,9 @@ Regras:
 - categoria de gasto, exatamente uma destas: ${CATEGORIAS.join(', ')}.
 - categoria de receita, exatamente uma destas: ${CATEGORIAS_RECEITA.join(', ')}.
 - pagamento (só para gasto): ${PAGAMENTOS.join(', ')}, ou "" se não der para saber.
+- FATURA DE CARTÃO ("a fatura do Inter veio 1.250", "fatura do Nubank deu 800"): tipo "gasto", categoria "Cartão de crédito", cartao = nome do cartão, pagamento "", descricao "Fatura <cartão>". A data é a que a pessoa disser ou hoje.
+- Compra feita no cartão de crédito com o cartão dito ("paguei 50 no Itaú", "no cartão da Renner"): pagamento "Crédito", cartao = nome do cartão e a categoria normal da compra (NUNCA "Cartão de crédito").
+- cartao: use o nome exato de um destes quando for um deles: ${cartoes}. Se for outro cartão, escreva o nome que a pessoa disse (ex.: "C6"). Se não houver cartão, "".
 - quem: uma destas pessoas: ${pessoas(env).join(', ')}. Se não for dito, use quem está enviando.
 - Uma compra = um item. Só crie vários itens se forem compras ou pagamentos diferentes.
 - Se não houver nenhum valor, devolva "itens": [] e explique em "observacao" o que faltou.
@@ -155,6 +160,19 @@ async function transcrever(env, arquivo) {
 }
 
 /** Limpa o que a IA devolveu para o app mostrar como rascunho. */
+/** Troca o nome falado ("banco inter") pelo nome cadastrado ("Inter"), se existir. */
+function nomeDoCartao(env, falado) {
+  const nome = String(falado || '').trim().slice(0, 40);
+  const chave = chaveCartao(nome) === 'nu' ? 'nubank' : chaveCartao(nome);
+  if (!chave) return '';
+  const lista = env._cartoes || [];
+  return (
+    lista.find((c) => chaveCartao(c) === chave) ||
+    lista.find((c) => chaveCartao(c) && (chave.includes(chaveCartao(c)) || chaveCartao(c).includes(chave))) ||
+    nome
+  );
+}
+
 function limpar(env, resultado) {
   const ps = pessoas(env);
   const itens = (Array.isArray(resultado?.itens) ? resultado.itens : [])
@@ -171,6 +189,7 @@ function limpar(env, resultado) {
         valor: Number.isFinite(valor) && valor > 0 ? Math.round(valor * 100) / 100 : null,
         pagamento: tipo === 'gasto' && PAGAMENTOS.includes(i.pagamento) ? i.pagamento : '',
         quem: ps.includes(i.quem) ? i.quem : '',
+        cartao: tipo === 'gasto' ? nomeDoCartao(env, i.cartao) : '',
       };
     });
   return { itens, observacao: String(resultado?.observacao || '').slice(0, 300) };
@@ -184,6 +203,12 @@ function limpar(env, resultado) {
  */
 export async function extrair(env, form) {
   try {
+    try {
+      const { results } = await env.DB.prepare('SELECT nome FROM cartoes WHERE ativo=1 ORDER BY nome').all();
+      env = { ...env, _cartoes: results.map((r) => r.nome) };
+    } catch {
+      /* sem cartões: segue normalmente */
+    }
     const tipo = form.get('tipo');
     const quem = String(form.get('quem') || '');
     const legenda = String(form.get('texto') || '').trim().slice(0, 2000);
