@@ -1,5 +1,5 @@
-import { chaveCartao } from './calculo.js';
-import { CATEGORIAS, CATEGORIAS_RECEITA, PAGAMENTOS, pessoas, hoje } from './config.js';
+import { chaveCartao, carregarCategorias } from './calculo.js';
+import { CATEGORIAS_PADRAO, CATEGORIAS_RECEITA_PADRAO, CAT_CARTAO, PAGAMENTOS, pessoas, hoje } from './config.js';
 
 const LIMITE_IMAGEM = 5 * 1024 * 1024; // 5 MB (o app já reduz a foto antes de enviar)
 const LIMITE_PDF = 5 * 1024 * 1024; // comprovantes em PDF costumam ter poucos KB
@@ -22,6 +22,9 @@ function paraBase64(buffer) {
   return btoa(bin);
 }
 
+const catsGasto = (env) => [...(env._cats?.gasto || CATEGORIAS_PADRAO), CAT_CARTAO];
+const catsReceita = (env) => env._cats?.receita || CATEGORIAS_RECEITA_PADRAO;
+
 function instrucoes(env, quemEnviou) {
   const cartoes = (env._cartoes || []).join(', ') || 'nenhum cadastrado';
   return `Você registra gastos e receitas de um casal brasileiro num app de finanças.
@@ -36,8 +39,9 @@ Regras:
 - data: a data que aparecer no comprovante ou que a pessoa disser ("ontem", "sexta"). Sem data, use hoje.
 - valor: número em reais com ponto decimal. Em nota fiscal ou cupom, use o TOTAL PAGO (com descontos), não cada item.
 - descricao: curta, como a pessoa falaria (ex.: "Mercado Assaí", "Uber para o trabalho", "iFood - pizza").
-- categoria de gasto, exatamente uma destas: ${CATEGORIAS.join(', ')}.
-- categoria de receita, exatamente uma destas: ${CATEGORIAS_RECEITA.join(', ')}.
+- categoria de gasto, exatamente uma destas: ${catsGasto(env).join(', ')}. Use "${CAT_CARTAO}" SÓ para fatura de cartão.
+- categoria de receita, exatamente uma destas: ${catsReceita(env).join(', ')}.
+- Escolha a categoria mais específica que existir (ex.: ração do gato -> uma categoria de pet, se houver; gasolina -> combustível ou carro, se houver). Se nenhuma servir, "Outros".
 - pagamento (só para gasto): ${PAGAMENTOS.join(', ')}, ou "" se não der para saber.
 - FATURA DE CARTÃO ("a fatura do Inter veio 1.250", "fatura do Nubank deu 800"): tipo "gasto", categoria "Cartão de crédito", cartao = nome do cartão, pagamento "", descricao "Fatura <cartão>". A data é a que a pessoa disser ou hoje.
 - Compra feita no cartão de crédito com o cartão dito ("paguei 50 no Itaú", "no cartão da Renner"): pagamento "Crédito", cartao = nome do cartão e a categoria normal da compra (NUNCA "Cartão de crédito").
@@ -179,7 +183,7 @@ function limpar(env, resultado) {
     .slice(0, 20)
     .map((i) => {
       const tipo = i.tipo === 'receita' ? 'receita' : 'gasto';
-      const lista = tipo === 'receita' ? CATEGORIAS_RECEITA : CATEGORIAS;
+      const lista = tipo === 'receita' ? catsReceita(env) : catsGasto(env);
       const valor = Number(i.valor);
       return {
         tipo,
@@ -205,7 +209,7 @@ export async function extrair(env, form) {
   try {
     try {
       const { results } = await env.DB.prepare('SELECT nome FROM cartoes WHERE ativo=1 ORDER BY nome').all();
-      env = { ...env, _cartoes: results.map((r) => r.nome) };
+      env = { ...env, _cartoes: results.map((r) => r.nome), _cats: await carregarCategorias(env.DB) };
     } catch {
       /* sem cartões: segue normalmente */
     }

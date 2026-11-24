@@ -238,3 +238,15 @@ dialog h3 { margin: 0 0 4px; }
 .telegram { margin: 4px 0 0; padding: 12px; }
 .telegram .dica { margin: 6px 0 8px; }
 .telegram .acoes { margin-top: 0; }
+
+.segmento.sub { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 12px; }
+.lista.mini li { padding: 8px 12px; font-size: .92rem; }
+.formas { display: block; color: var(--suave); font-size: .8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nova-cat { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.nova-cat .btn { width: auto; }
+.cat-acoes { display: flex; gap: 4px; flex: none; }
+.cat-acoes button { border: 1px solid var(--linha); background: var(--fundo); border-radius: 8px; padding: 6px 8px; cursor: pointer; font-size: .85rem; }
+.alerta-txt { color: var(--gasto); }
+#dlg-variavel .barras { margin: 8px 0; }
+#variavel-itens { max-height: 35vh; overflow: auto; margin-bottom: 8px; }
+#lista-categorias { max-height: 40vh; overflow: auto; margin: 10px 0; }

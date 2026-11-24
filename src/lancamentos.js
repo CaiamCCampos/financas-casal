@@ -1,10 +1,11 @@
 // Validação e gravação de lançamentos (usado pelo app e pelo robô do Telegram).
 
-import { CATEGORIAS, CATEGORIAS_RECEITA, PAGAMENTOS, CAT_CARTAO, pessoas, hoje } from './config.js';
-import { resolverCartao } from './calculo.js';
+import { PAGAMENTOS, CAT_CARTAO, pessoas, hoje } from './config.js';
+import { resolverCartao, carregarCategorias, competenciaPadrao } from './calculo.js';
 import { erro } from './erros.js';
 
 const RE_DATA = /^\d{4}-\d{2}-\d{2}$/;
+const RE_MES = /^\d{4}-\d{2}$/;
 
 /**
  * Converte o valor digitado em centavos. Aceita: 12.5, "12,50", "R$ 1.234,56",
@@ -27,15 +28,15 @@ export function textoCurto(v, max = 120) {
   return String(v ?? '').trim().slice(0, max);
 }
 
-/** Valida e normaliza um lançamento vindo do app. */
-export function normalizarLancamento(b, env) {
+/** Valida e normaliza um lançamento. cats = carregarCategorias(). */
+export function normalizarLancamento(b, env, cats) {
   const tipo = b.tipo === 'receita' ? 'receita' : 'gasto';
   const data = b.data || hoje();
   if (!RE_DATA.test(data)) erro(400, 'Data inválida, use AAAA-MM-DD');
   const valor = paraCentavos(b.valor);
   if (!(valor > 0)) erro(400, 'Informe um valor maior que zero');
 
-  const lista = tipo === 'receita' ? CATEGORIAS_RECEITA : CATEGORIAS;
+  const lista = tipo === 'receita' ? cats.receita : [...cats.gasto, CAT_CARTAO];
   const categoria = lista.includes(b.categoria) ? b.categoria : 'Outros';
   const quem = pessoas(env).includes(b.quem) ? b.quem : '';
   const pagamento = tipo === 'gasto' && PAGAMENTOS.includes(b.pagamento) ? b.pagamento : '';
@@ -59,6 +60,8 @@ export function normalizarLancamento(b, env) {
     cartao,
     cartaoId,
     pago,
+    // fatura: mês das compras que ela cobre (se não vier, segue a regra do cartão)
+    competencia: categoria === CAT_CARTAO && RE_MES.test(b.competencia || '') ? b.competencia : null,
   };
 }
 
@@ -68,22 +71,40 @@ export async function idDoCartao(db, l) {
   return null;
 }
 
+/** Normaliza, acha/cria o cartão e calcula a competência da fatura. */
+export async function prepararLancamento(env, b, cats) {
+  const db = env.DB;
+  const l = normalizarLancamento(b, env, cats);
+  l.cartaoId = await idDoCartao(db, l);
+  if (l.categoria === CAT_CARTAO) {
+    if (!l.cartaoId) erro(400, 'Diga de qual cartão é a fatura');
+    if (!l.competencia) {
+      const c = await db.prepare('SELECT fatura_ref FROM cartoes WHERE id=?1').bind(l.cartaoId).first();
+      l.competencia = competenciaPadrao(l.data, c?.fatura_ref);
+    }
+  } else {
+    l.competencia = null;
+  }
+  return l;
+}
 
 /** Valida e grava uma lista de lançamentos. Devolve os ids criados. */
 export async function salvarLancamentos(env, lista) {
   const db = env.DB;
-  const itens = lista.slice(0, 30).map((b) => normalizarLancamento(b, env));
-  for (const l of itens) {
-    l.cartaoId = await idDoCartao(db, l);
+  const cats = await carregarCategorias(db);
+  const itens = [];
+  for (const b of lista.slice(0, 30)) {
+    const l = await prepararLancamento(env, b, cats);
     if (l.pago === null) l.pago = l.categoria === CAT_CARTAO ? 0 : 1;
+    itens.push(l);
   }
   const stmt = db.prepare(
-    `INSERT INTO lancamentos (tipo, data, descricao, categoria, valor, quem, pagamento, origem, cartao_id, pago)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) RETURNING id`
+    `INSERT INTO lancamentos (tipo, data, descricao, categoria, valor, quem, pagamento, origem, cartao_id, pago, competencia)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) RETURNING id`
   );
   const res = await db.batch(
     itens.map((l) =>
-      stmt.bind(l.tipo, l.data, l.descricao, l.categoria, l.valor, l.quem, l.pagamento, l.origem, l.cartaoId, l.pago)
+      stmt.bind(l.tipo, l.data, l.descricao, l.categoria, l.valor, l.quem, l.pagamento, l.origem, l.cartaoId, l.pago, l.competencia)
     )
   );
   return res.map((r) => r.results[0].id);

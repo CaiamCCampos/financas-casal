@@ -1,4 +1,6 @@
-export const CATEGORIAS = [
+// As categorias agora ficam no banco (tabela categorias) e são editadas pelo app.
+// Estas listas só servem de reserva caso o banco ainda não tenha a tabela.
+export const CATEGORIAS_PADRAO = [
   'Moradia',
   'Contas da casa',
   'Mercado',
@@ -11,14 +13,16 @@ export const CATEGORIAS = [
   'Compras',
   'Assinaturas',
   'Educação',
-  'Cartão de crédito',
   'Outros',
 ];
+export const CATEGORIAS_RECEITA_PADRAO = ['Salário', 'Adiantamento', 'Extra', 'Outros'];
 
-/** Categoria das faturas de cartão. */
+/** Categoria das faturas de cartão (é conferência: não soma direto). */
 export const CAT_CARTAO = 'Cartão de crédito';
-
-export const CATEGORIAS_RECEITA = ['Salário', 'Adiantamento', 'Extra', 'Outros'];
+/** Linha que mostra a parte da fatura que não foi lançada compra a compra. */
+export const CAT_NAO_DETALHADO = 'Cartão (não detalhado)';
+/** Nomes que o sistema usa e que não podem virar categoria comum. */
+export const RESERVADAS = [CAT_CARTAO, CAT_NAO_DETALHADO];
 
 export const PAGAMENTOS = ['Pix', 'Débito', 'Crédito', 'Dinheiro'];
 

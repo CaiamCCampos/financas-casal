@@ -132,7 +132,15 @@ function criarFormLanc(destino, v = {}) {
   const aplicarTipo = (tipo, categoria) => {
     f.dataset.tipo = tipo;
     $(`input[value=${tipo}]`, f).checked = true;
-    opcoes($('[name=categoria]', f), tipo === 'receita' ? c.categorias_receita : c.categorias, categoria);
+    const sel = $('[name=categoria]', f);
+    opcoes(sel, tipo === 'receita' ? c.categorias_receita : c.categorias, categoria);
+    if (tipo === 'gasto') {
+      // fatura de cartão: categoria do sistema, mostrada com nome mais claro
+      sel.append(new Option('💳 Fatura de cartão', c.cat_cartao, false, categoria === c.cat_cartao));
+    }
+    if (categoria && ![...sel.options].some((o) => o.value === categoria)) {
+      sel.append(new Option(categoria, categoria, false, true)); // categoria removida, mas o lançamento antigo usa
+    }
   };
   aplicarTipo(v.tipo || 'gasto', v.categoria);
   $$(`input[name=${nome}]`, f).forEach((r) => r.addEventListener('change', () => aplicarTipo(r.value)));
@@ -160,7 +168,9 @@ function criarFormLanc(destino, v = {}) {
     $('.cartao-novo', f).hidden = !(mostra && selCartao.value === '__novo');
     if (cat === c.cat_cartao) $('[name=pagamento]', f).closest('label').style.visibility = 'hidden';
     else $('[name=pagamento]', f).closest('label').style.visibility = '';
+    $('.campo-competencia', f).hidden = !(tipo === 'gasto' && cat === c.cat_cartao);
   };
+  if (v.competencia) $('[name=competencia]', f).value = v.competencia;
   f.addEventListener('change', atualizarCartao);
   atualizarCartao();
   return f;
@@ -179,6 +189,7 @@ function lerFormLanc(f, origem = 'manual') {
     quem: $('[name=quem]', f).value,
     pagamento: tipo === 'gasto' ? $('[name=pagamento]', f).value : '',
     cartao: lerCartao(f, tipo),
+    competencia: $('.campo-competencia', f).hidden ? null : $('[name=competencia]', f).value || null,
     origem,
   };
 }
@@ -412,20 +423,16 @@ function itemLanc(l) {
   const detalhes = [l.categoria === estado.config.cat_cartao ? 'Fatura' : l.categoria, l.quem, l.cartao || l.pagamento]
     .filter(Boolean)
     .join(' · ');
-  const naoSoma = l.tipo === 'gasto' && naoSomaNoTotal(l);
+  const fatura = l.categoria === estado.config.cat_cartao;
   return `<li class="clicavel" data-id="${l.id}">
     <div class="info"><strong>${esc(l.descricao || l.categoria)}</strong><small>${esc(detalhes)}${
-      naoSoma ? ' <span class="selo">já na fatura</span>' : ''
+      fatura ? ` <span class="selo">conferência${l.competencia ? ` · compras de ${esc(mesCurto(l.competencia))}` : ''}</span>` : ''
     }</small></div>
     <span class="valor ${l.tipo}">${sinal} ${reais(l.valor)}</span></li>`;
 }
 
-/** Mesma regra do servidor: compra no cartão "pela fatura" não soma de novo. */
-function naoSomaNoTotal(l) {
-  if (!l.cartao_id || !l.cartao_controle) return false;
-  const fatura = l.categoria === estado.config.cat_cartao;
-  return fatura ? l.cartao_controle !== 'fatura' : l.cartao_controle !== 'compras';
-}
+const MESES_CURTOS = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+const mesCurto = (mes) => `${MESES_CURTOS[Number(mes.slice(5, 7)) - 1]}/${mes.slice(2, 4)}`;
 
 function renderExtrato() {
   const lista = lancamentosMes.filter((l) => estado.filtro === 'todos' || l.tipo === estado.filtro);
@@ -506,8 +513,9 @@ async function carregarResumo() {
   const saldo = $('#k-saldo');
   saldo.textContent = reais(r.saldo);
   saldo.classList.toggle('negativo', r.saldo < 0);
-  $('#k-variaveis').textContent = reais(r.gastos_dia_a_dia);
-  $('#k-faturas').textContent = reais(r.faturas);
+  $('#k-variaveis').textContent = reais(r.gastos_variaveis);
+  $('#k-nd').textContent = reais(r.nao_detalhado);
+  $('#k-nd-linha').hidden = !r.nao_detalhado;
   $('#k-fixas').textContent = reais(r.contas_fixas);
   const pct = r.contas_fixas ? Math.round((r.contas_fixas_pagas / r.contas_fixas) * 100) : 0;
   $('#k-fixas-barra').style.width = pct + '%';
@@ -515,8 +523,10 @@ async function carregarResumo() {
     ? `Contas fixas: ${reais(r.contas_fixas_pagas)} pagos de ${reais(r.contas_fixas)} (${pct}%)`
     : 'Cadastre os valores das contas fixas na aba Contas.';
   const ns = $('#k-nao-somados');
-  ns.hidden = !r.nao_somados;
-  ns.textContent = `${reais(r.nao_somados)} em compras no cartão não somam de novo: já estão na fatura.`;
+  ns.hidden = !r.nao_detalhado;
+  ns.textContent = 'Cartão não detalhado: parte das faturas que não foi lançada compra a compra.';
+  renderVariaveis(r);
+  renderCartoes(r);
 
   const maior = Math.max(1, ...r.por_categoria.map((c) => c.total));
   $('#por-categoria').innerHTML = r.por_categoria
@@ -633,26 +643,76 @@ function editarFixa(conta) {
   dlg.showModal();
 }
 
-// ---------- cartões ----------
+// ---------- contas: variáveis, cartões, fixas ----------
+$('#sub-contas').addEventListener('change', (e) => {
+  const v = e.target.value;
+  for (const p of ['variaveis', 'cartoes', 'fixas']) $(`#painel-${p}`).hidden = p !== v;
+});
+
+function renderVariaveis(r) {
+  const lista = r.variaveis.filter((v) => v.qtd > 0).sort((a, b) => b.total - a.total);
+  const vazias = r.variaveis.filter((v) => v.qtd === 0);
+  $('#variaveis').innerHTML =
+    lista
+      .map(
+        (v, i) => `<li class="clicavel" data-var="${esc(v.categoria)}"><div class="info"><strong>${esc(v.categoria)}</strong>
+        <small class="formas">${v.por_forma.map((f) => `${esc(f.forma)} ${reais(f.total)}`).join(' · ')}</small></div>
+        <span class="valor">${reais(v.total)}</span></li>`
+      )
+      .join('') +
+    (vazias.length
+      ? `<li class="dia">Sem gastos este mês: ${vazias.map((v) => esc(v.categoria)).join(', ')}</li>`
+      : '');
+}
+
+$('#variaveis').addEventListener('click', (e) => {
+  const li = e.target.closest('[data-var]');
+  if (!li) return;
+  const v = resumoAtual.variaveis.find((x) => x.categoria === li.dataset.var);
+  const dlg = $('#dlg-variavel');
+  $('#variavel-titulo').textContent = v.categoria;
+  $('#variavel-sub').textContent = `${nomeMes(estado.mes)} · ${reais(v.total)} em ${v.qtd} lançamento(s)`;
+  const maior = Math.max(1, ...v.por_forma.map((f) => f.total));
+  $('#variavel-formas').innerHTML = v.por_forma
+    .map(
+      (f) => `<li><div class="topo-barra"><span>${esc(f.forma)}</span><b>${reais(f.total)}</b></div>
+      <div class="trilho"><div style="width:${(f.total / maior) * 100}%"></div></div></li>`
+    )
+    .join('');
+  $('#variavel-itens').innerHTML = lancamentosMes
+    .filter((l) => l.tipo === 'gasto' && l.categoria === v.categoria)
+    .map(
+      (l) => `<li><div class="info"><strong>${esc(l.descricao || l.categoria)}</strong>
+      <small>${esc([dataBR(l.data), l.quem, l.cartao || l.pagamento].filter(Boolean).join(' · '))}</small></div>
+      <span class="valor gasto">${reais(l.valor)}</span></li>`
+    )
+    .join('');
+  dlg.showModal();
+});
+
 let cartoes = [];
 
-async function carregarCartoes() {
-  cartoes = await api(`/api/cartoes?mes=${estado.mes}`);
+function renderCartoes(r) {
+  const peso = (c) => (c.compras || 0) + (c.fatura || 0);
+  cartoes = [...r.cartoes].sort((a, b) => peso(b) - peso(a) || a.nome.localeCompare(b.nome));
   $('#cartoes').innerHTML = cartoes
     .map((c) => {
       const temFatura = c.fatura !== null;
-      const detalhe = [
-        c.dia_vencimento ? `Vence dia ${c.dia_vencimento}` : null,
-        c.controle === 'compras' ? 'compra a compra' : null,
-        c.qtd_compras ? `${c.qtd_compras} compra(s): ${reais(c.compras)}` : null,
-      ]
-        .filter(Boolean)
-        .join(' · ');
+      const cats = c.por_categoria.slice(0, 3).map((x) => `${x.categoria} ${reais(x.total)}`).join(' · ');
+      const linhaFatura = temFatura
+        ? `Fatura destas compras: ${reais(c.fatura)}${c.fatura_paga ? ' · paga' : ''}`
+        : 'Fatura destas compras ainda não lançada';
+      const ajuste = c.nao_detalhado
+        ? `<br><span>+ ${reais(c.nao_detalhado)} não detalhado entra no total</span>`
+        : c.excesso
+          ? `<br><span class="alerta-txt">Compras passam da fatura em ${reais(c.excesso)}: confira o mês</span>`
+          : '';
       return `<li class="${temFatura && c.fatura_paga ? 'paga' : ''}" data-id="${c.id}">
         <input type="checkbox" class="check" ${c.fatura_paga ? 'checked' : ''} ${temFatura ? '' : 'disabled'}
           aria-label="Fatura paga">
-        <div class="info clicavel"><strong>${esc(c.nome)}</strong><small>${esc(detalhe || 'Toque para editar')}</small></div>
-        <span class="valor">${temFatura ? reais(c.fatura) : '<small>sem fatura</small>'}</span></li>`;
+        <div class="info clicavel"><strong>${esc(c.nome)}</strong>
+          <small>${esc(linhaFatura)}${cats ? `<br>${esc(cats)}` : ''}${ajuste}</small></div>
+        <span class="valor">${c.compras ? reais(c.compras) : '<small>sem compras</small>'}</span></li>`;
     })
     .join('');
 }
@@ -676,23 +736,16 @@ $('#cartoes').addEventListener('click', async (e) => {
 
 $('#btn-novo-cartao').addEventListener('click', () => editarCartao(null));
 
-const EXPLICA_CONTROLE = {
-  fatura: 'A fatura entra no total do mês. Compras que vocês lançarem nesse cartão aparecem só como detalhe e não somam de novo.',
-  compras: 'Cada compra lançada nesse cartão entra no total. A fatura serve só para conferir o valor e o vencimento.',
-};
-
 function editarCartao(c) {
   const dlg = $('#dlg-cartao');
   const form = $('#form-cartao');
   $('#cartao-titulo').textContent = c ? 'Editar cartão' : 'Novo cartão';
   form.nome.value = c?.nome || '';
-  form.controle.value = c?.controle || 'fatura';
+  form.fatura_ref.value = c?.fatura_ref || 'anterior';
   form.dia_vencimento.value = c?.dia_vencimento || '';
-  $('#cartao-explica').textContent = EXPLICA_CONTROLE[form.controle.value];
-  form.controle.onchange = () => ($('#cartao-explica').textContent = EXPLICA_CONTROLE[form.controle.value]);
   $('#cartao-excluir').hidden = !c;
   dlg.onclose = async () => {
-    const corpo = { nome: form.nome.value, controle: form.controle.value, dia_vencimento: form.dia_vencimento.value || null };
+    const corpo = { nome: form.nome.value, fatura_ref: form.fatura_ref.value, dia_vencimento: form.dia_vencimento.value || null };
     try {
       if (dlg.returnValue === 'salvar') {
         await api(c ? `/api/cartoes/${c.id}` : '/api/cartoes', { metodo: c ? 'PUT' : 'POST', corpo });
@@ -711,6 +764,75 @@ function editarCartao(c) {
   dlg.returnValue = '';
   dlg.showModal();
 }
+
+// ---------- categorias ----------
+let categoriasLista = [];
+
+async function abrirCategorias() {
+  categoriasLista = await api('/api/categorias');
+  renderCategorias();
+  $('#dlg-categorias').onclose = async () => {
+    await recarregarConfig();
+    recarregar();
+  };
+  $('#dlg-categorias').showModal();
+}
+
+const tipoCat = () => $('#cat-tipo input:checked').value;
+
+function renderCategorias() {
+  $('#lista-categorias').innerHTML = categoriasLista
+    .filter((c) => c.tipo === tipoCat())
+    .map(
+      (c) => `<li data-cat="${c.id}"><div class="info"><strong>${esc(c.nome)}</strong></div>
+      ${
+        c.nome === 'Outros'
+          ? '<small class="selo">padrão</small>'
+          : `<span class="cat-acoes"><button type="button" data-acao="renomear">Renomear</button>
+             <button type="button" data-acao="remover">Remover</button></span>`
+      }</li>`
+    )
+    .join('');
+}
+
+$('#btn-categorias').addEventListener('click', () => abrirCategorias().catch((e) => aviso(e.message)));
+$('#cat-tipo').addEventListener('change', renderCategorias);
+
+$('#btn-add-categoria').addEventListener('click', async () => {
+  const nome = $('#nova-categoria').value.trim();
+  if (!nome) return;
+  try {
+    await api('/api/categorias', { metodo: 'POST', corpo: { nome, tipo: tipoCat() } });
+    $('#nova-categoria').value = '';
+    categoriasLista = await api('/api/categorias');
+    renderCategorias();
+    aviso(`Categoria ${nome} criada ✔`);
+  } catch (err) {
+    aviso(err.message);
+  }
+});
+
+$('#lista-categorias').addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-acao]');
+  if (!b) return;
+  const c = categoriasLista.find((x) => x.id === Number(b.closest('[data-cat]').dataset.cat));
+  try {
+    if (b.dataset.acao === 'renomear') {
+      const nome = prompt(`Novo nome para "${c.nome}":`, c.nome);
+      if (!nome || nome.trim() === c.nome) return;
+      await api(`/api/categorias/${c.id}`, { metodo: 'PUT', corpo: { nome } });
+      aviso('Renomeada ✔');
+    } else {
+      if (!confirm(`Remover "${c.nome}" da lista? Os lançamentos antigos continuam nos relatórios.`)) return;
+      await api(`/api/categorias/${c.id}`, { metodo: 'DELETE' });
+      aviso('Removida');
+    }
+    categoriasLista = await api('/api/categorias');
+    renderCategorias();
+  } catch (err) {
+    aviso(err.message);
+  }
+});
 
 // ---------- configurações ----------
 function abrirConfig() {
@@ -853,7 +975,8 @@ async function recarregarConfig() {
 
 async function recarregar() {
   try {
-    await Promise.all([carregarLancamentos(), carregarResumo(), carregarFixas(), carregarCartoes()]);
+    await carregarLancamentos();
+    await Promise.all([carregarResumo(), carregarFixas()]);
   } catch (err) {
     aviso(err.message);
   }

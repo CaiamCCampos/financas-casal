@@ -4,7 +4,7 @@
 import { pessoas, hoje, CAT_CARTAO } from './config.js';
 import { extrair } from './ia.js';
 import { salvarLancamentos } from './lancamentos.js';
-import { carregarMes, resumir, resumirCartoes } from './calculo.js';
+import { carregarMes, resumir } from './calculo.js';
 import { planilhaDoMes, relatorioPessoa } from './planilha.js';
 import { pinConfere } from './erros.js';
 
@@ -297,8 +297,23 @@ async function lancar(env, msg, u, origem) {
     .bind(JSON.stringify(ids), msg.from.id)
     .run();
 
-  const linhas = validos.map((l) => {
+  // competência das faturas salvas, para mostrar "compras de out/26"
+  const comp = {};
+  if (validos.some((l) => l.categoria === CAT_CARTAO)) {
+    const { results } = await env.DB.prepare(
+      `SELECT id, competencia FROM lancamentos WHERE id IN (${ids.map(() => '?').join(',')})`
+    )
+      .bind(...ids)
+      .all();
+    for (const x of results) comp[x.id] = x.competencia;
+  }
+  const linhas = validos.map((l, i) => {
     const valor = reais(Math.round(l.valor * 100));
+    if (l.categoria === CAT_CARTAO) {
+      const c = comp[ids[i]];
+      const mesTxt = c ? `de ${nomeMes(c).replace(/ de \d{4}$/, '').toLowerCase()}` : 'do mês anterior';
+      return `💳 <b>Fatura ${html(l.cartao)}</b> — ${valor}\n<i>Conferência das compras ${html(mesTxt)}: só a parte não lançada entra no total</i>`;
+    }
     const titulo = l.descricao || (l.categoria === CAT_CARTAO ? `Fatura ${l.cartao}` : l.categoria);
     const det = [
       l.categoria === CAT_CARTAO ? `Fatura ${l.cartao}` : l.categoria,
@@ -375,8 +390,8 @@ async function botao(env, q) {
 
 async function enviarResumo(env, chat, pessoa) {
   const mes = hoje().slice(0, 7);
-  const { L, F, C } = await carregarMes(env, mes);
-  const r = resumir(env, L, F);
+  const { L, F, C, cats } = await carregarMes(env, mes);
+  const r = resumir(env, L, F, C, cats);
   const top = r.por_categoria
     .filter((c) => c.total > 0)
     .sort((a, b) => b.total - a.total)
@@ -384,20 +399,21 @@ async function enviarResumo(env, chat, pessoa) {
     .map((c) => `${EMOJI[c.categoria] || '•'} ${html(c.categoria)}: ${reais(c.total)}`);
   const eu = r.por_pessoa.find((p) => p.quem === pessoa);
   const meus = (eu?.categorias || []).slice(0, 3).map((c) => `${html(c.categoria)} ${reais(c.total)}`);
-  const aPagar = resumirCartoes(L, C)
-    .filter((c) => c.fatura !== null && !c.fatura_paga)
-    .map((c) => `💳 ${html(c.nome)}: ${reais(c.fatura)}${c.dia_vencimento ? ` (vence dia ${c.dia_vencimento})` : ''}`);
+  const porCartao = r.cartoes
+    .filter((c) => c.compras > 0)
+    .sort((a, b) => b.compras - a.compras)
+    .map((c) => `💳 ${html(c.nome)}: ${reais(c.compras)}${c.fatura !== null ? ` (fatura ${reais(c.fatura)}${c.fatura_paga ? ' ✓' : ''})` : ''}`);
 
   const texto = [
     `📊 <b>${nomeMes(mes)}</b>`,
     '',
     `Receitas: <b>${reais(r.receitas)}</b>`,
     `Despesas: <b>${reais(r.despesas)}</b>`,
-    `<i>dia a dia ${reais(r.gastos_dia_a_dia)} · faturas ${reais(r.faturas)} · fixas ${reais(r.contas_fixas)}</i>`,
+    `<i>variáveis ${reais(r.gastos_variaveis)}${r.nao_detalhado ? ` · cartão não detalhado ${reais(r.nao_detalhado)}` : ''} · fixas ${reais(r.contas_fixas)}</i>`,
     `${r.saldo < 0 ? '🔴' : '🟢'} Saldo: <b>${reais(r.saldo)}</b>`,
     top.length ? `\n<b>Onde mais foi:</b>\n${top.join('\n')}` : '',
     eu ? `\n<b>Você (${html(pessoa)}):</b> gastou ${reais(eu.gastou)}${meus.length ? `\n${meus.join(' · ')}` : ''}` : '',
-    aPagar.length ? `\n<b>Faturas a pagar:</b>\n${aPagar.join('\n')}` : '',
+    porCartao.length ? `\n<b>Compras por cartão:</b>\n${porCartao.join('\n')}` : '',
   ]
     .filter((x) => x !== '')
     .join('\n');
