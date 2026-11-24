@@ -22,16 +22,18 @@
     }
   ],
 
-  // Workers AI: transcrição dos áudios (Whisper)
+  // Workers AI (gratuito na cota diária): transcreve áudio e lê foto/texto
   "ai": { "binding": "AI" },
 
   "vars": {
     // Nomes que aparecem no app, separados por vírgula
     "PESSOAS": "Caiam,Milena",
+    "MODELO_IA_GRATIS": "@cf/meta/llama-4-scout-17b-16e-instruct",
+    // Só usado se o segredo ANTHROPIC_API_KEY existir
     "MODELO_IA": "claude-haiku-5-5"
   }
 
   // Segredos (não ficam no código), cadastre no painel do Cloudflare:
   //   APP_PIN            -> senha que vocês digitam no app
-  //   ANTHROPIC_API_KEY  -> chave da API do Claude (leitura de foto, áudio e texto)
+  //   ANTHROPIC_API_KEY  -> OPCIONAL: troca a IA gratuita pelo Claude (mais preciso, pago)
 }

@@ -521,8 +521,8 @@ function abrirConfig() {
   opcoes($('#cfg-quem'), estado.config.pessoas, estado.quem, estado.quem ? undefined : 'Escolha…');
   const ia = estado.config.ia;
   $('#cfg-ia').textContent = ia.texto_e_foto
-    ? 'Leitura por IA ligada: foto, áudio e texto.'
-    : 'Leitura por IA desligada (falta a chave da API). Dá para lançar à mão normalmente.';
+    ? `Leitura por IA ligada (${ia.motor}): foto, áudio e texto.`
+    : 'Leitura por IA desligada. Dá para lançar à mão normalmente.';
   dlg.onclose = () => {
     if (dlg.returnValue === 'sair') return sair();
     const quem = $('#cfg-quem').value;

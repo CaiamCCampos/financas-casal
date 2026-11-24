@@ -161,7 +161,11 @@ async function api(req, env, url) {
       pagamentos: PAGAMENTOS,
       pessoas: pessoas(env),
       hoje: hoje(),
-      ia: { texto_e_foto: Boolean(env.ANTHROPIC_API_KEY), audio: Boolean(env.AI && env.ANTHROPIC_API_KEY) },
+      ia: {
+        texto_e_foto: Boolean(env.AI || env.ANTHROPIC_API_KEY),
+        audio: Boolean(env.AI),
+        motor: env.ANTHROPIC_API_KEY ? 'Claude' : 'Cloudflare (gratuito)',
+      },
     });
   }
 

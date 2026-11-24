@@ -15,8 +15,9 @@ App web instalável no celular para lançar gastos e receitas do casal **por fot
 ```
 Celular (app web / PWA)  ──►  Cloudflare Worker (/api)  ──►  D1 (banco SQLite)
                                    │
-                                   ├─► Claude API ........ lê foto e texto
-                                   └─► Workers AI Whisper  transcreve o áudio
+                                   ├─► Workers AI Whisper ... transcreve o áudio (grátis)
+                                   ├─► Workers AI Llama 4 ... lê foto e texto (grátis)
+                                   └─► Claude API ........... opcional, mais preciso (pago)
 ```
 
 | Pasta | O quê |
@@ -31,7 +32,7 @@ Valores ficam em **centavos** no banco, para não ter erro de arredondamento.
 
 ## Colocar no ar (uma vez)
 
-Tudo cabe no plano gratuito do Cloudflare. Só a leitura por IA tem custo: alguns centavos por lançamento na API do Claude.
+Tudo cabe no plano gratuito do Cloudflare, inclusive a IA: a cota grátis da Workers AI (10.000 neurons por dia) dá para dezenas de fotos e áudios por dia.
 
 1. ~~Criar o banco~~: **feito**. O banco D1 `financas-casal` já existe e está com as tabelas criadas.
 2. **Ajustar os nomes** em `wrangler.jsonc` → `vars.PESSOAS` (hoje: `"Caiam,Milena"`).
@@ -40,7 +41,7 @@ Tudo cabe no plano gratuito do Cloudflare. Só a leitura por IA tem custo: algun
 
 5. **Cadastrar os segredos** (Worker → Settings → Variables and Secrets):
    - `APP_PIN`: a senha que vocês vão digitar no app.
-   - `ANTHROPIC_API_KEY`: chave criada em console.anthropic.com. Sem ela, o app funciona só com lançamento à mão.
+   - `ANTHROPIC_API_KEY` (opcional): chave de console.anthropic.com. Se existir, a leitura passa a usar o Claude, que é mais preciso e custa centavos por lançamento.
 
 6. **Instalar no celular**: abra o endereço `*.workers.dev` no Chrome (Android) ou no Safari (iPhone) → **Adicionar à tela inicial**.
 

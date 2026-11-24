@@ -41,10 +41,27 @@ Regras:
 - "observacao": uma frase curta só se algo estiver incerto (valor ilegível, data duvidosa); senão "".`;
 }
 
-async function chamarClaude(env, conteudo, quemEnviou) {
-  if (!env.ANTHROPIC_API_KEY) {
-    throw new ErroIA(503, 'A leitura por IA ainda não está ligada: falta o segredo ANTHROPIC_API_KEY no Cloudflare.');
+function lerJSON(texto) {
+  if (texto && typeof texto === 'object') return texto; // alguns modelos já devolvem objeto
+  const t = String(texto || '');
+  const ini = t.indexOf('{');
+  const fim = t.lastIndexOf('}');
+  try {
+    return JSON.parse(t.slice(ini, fim + 1));
+  } catch {
+    console.error('Resposta sem JSON', t);
+    throw new ErroIA(502, 'Não entendi a resposta da IA. Tente de novo ou lance à mão.');
   }
+}
+
+/** Claude (pago, mais preciso). Usado só se existir o segredo ANTHROPIC_API_KEY. */
+async function viaClaude(env, { texto, imagem }, quem) {
+  const conteudo = imagem
+    ? [
+        { type: 'image', source: { type: 'base64', media_type: imagem.tipo, data: imagem.base64 } },
+        { type: 'text', text: texto },
+      ]
+    : texto;
   const resp = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -55,7 +72,7 @@ async function chamarClaude(env, conteudo, quemEnviou) {
     body: JSON.stringify({
       model: env.MODELO_IA || 'claude-haiku-5-5',
       max_tokens: 1024,
-      system: instrucoes(env, quemEnviou),
+      system: instrucoes(env, quem),
       messages: [{ role: 'user', content: conteudo }],
     }),
   });
@@ -64,18 +81,43 @@ async function chamarClaude(env, conteudo, quemEnviou) {
     throw new ErroIA(502, 'A IA não conseguiu responder agora. Tente de novo ou lance à mão.');
   }
   const dados = await resp.json();
-  const texto = (dados.content || [])
-    .filter((b) => b.type === 'text')
-    .map((b) => b.text)
-    .join('');
-  const ini = texto.indexOf('{');
-  const fim = texto.lastIndexOf('}');
+  return lerJSON((dados.content || []).filter((b) => b.type === 'text').map((b) => b.text).join(''));
+}
+
+/** Workers AI do Cloudflare (gratuito dentro da cota diária). */
+async function viaWorkersAI(env, { texto, imagem }, quem) {
+  if (!env.AI) throw new ErroIA(503, 'A IA do Cloudflare não está ligada (binding AI).');
+  const conteudo = imagem
+    ? [
+        { type: 'text', text: texto },
+        { type: 'image_url', image_url: { url: `data:${imagem.tipo};base64,${imagem.base64}` } },
+      ]
+    : texto;
+  let r;
   try {
-    return JSON.parse(texto.slice(ini, fim + 1));
-  } catch {
-    console.error('Resposta sem JSON', texto);
-    throw new ErroIA(502, 'Não entendi a resposta da IA. Tente de novo ou lance à mão.');
+    r = await env.AI.run(env.MODELO_IA_GRATIS || '@cf/meta/llama-4-scout-17b-16e-instruct', {
+      messages: [
+        { role: 'system', content: instrucoes(env, quem) },
+        { role: 'user', content: conteudo },
+      ],
+      max_tokens: 1024,
+      temperature: 0.1,
+    });
+  } catch (e) {
+    console.error('Workers AI', e);
+    const cota = /limit|quota|neurons|4006/i.test(String(e?.message));
+    throw new ErroIA(
+      cota ? 429 : 502,
+      cota
+        ? 'A cota gratuita de IA de hoje acabou. Lance à mão; amanhã volta.'
+        : 'A IA não conseguiu responder agora. Tente de novo ou lance à mão.'
+    );
   }
+  return lerJSON(r?.response ?? r?.choices?.[0]?.message?.content ?? r);
+}
+
+function chamarIA(env, pedido, quem) {
+  return env.ANTHROPIC_API_KEY ? viaClaude(env, pedido, quem) : viaWorkersAI(env, pedido, quem);
 }
 
 async function transcrever(env, arquivo) {
@@ -123,7 +165,7 @@ export async function extrair(env, form) {
 
     if (tipo === 'texto') {
       if (!legenda) throw new ErroIA(400, 'Escreva o que foi gasto.');
-      return { origem: 'texto', ...limpar(env, await chamarClaude(env, legenda, quem)) };
+      return { origem: 'texto', ...limpar(env, await chamarIA(env, { texto: legenda }, quem)) };
     }
 
     const arquivo = form.get('arquivo');
@@ -132,21 +174,16 @@ export async function extrair(env, form) {
     if (tipo === 'foto') {
       if (!TIPOS_IMAGEM.includes(arquivo.type)) throw new ErroIA(400, 'Formato de imagem não suportado.');
       if (arquivo.size > LIMITE_IMAGEM) throw new ErroIA(413, 'Foto grande demais.');
-      const conteudo = [
-        {
-          type: 'image',
-          source: { type: 'base64', media_type: arquivo.type, data: paraBase64(await arquivo.arrayBuffer()) },
-        },
-        { type: 'text', text: legenda || 'Registre o lançamento desta imagem (comprovante, nota ou print).' },
-      ];
-      return { origem: 'foto', ...limpar(env, await chamarClaude(env, conteudo, quem)) };
+      const imagem = { tipo: arquivo.type, base64: paraBase64(await arquivo.arrayBuffer()) };
+      const texto = legenda || 'Registre o lançamento desta imagem (comprovante, nota ou print).';
+      return { origem: 'foto', ...limpar(env, await chamarIA(env, { texto, imagem }, quem)) };
     }
 
     if (tipo === 'audio') {
       if (arquivo.size > LIMITE_AUDIO) throw new ErroIA(413, 'Áudio longo demais.');
       const transcricao = await transcrever(env, arquivo);
       if (!transcricao) throw new ErroIA(422, 'Não consegui ouvir nada no áudio. Tente de novo.');
-      return { origem: 'audio', transcricao, ...limpar(env, await chamarClaude(env, transcricao, quem)) };
+      return { origem: 'audio', transcricao, ...limpar(env, await chamarIA(env, { texto: transcricao }, quem)) };
     }
 
     throw new ErroIA(400, 'Tipo deve ser foto, audio ou texto.');
