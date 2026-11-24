@@ -1,0 +1,37 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "financas-casal",
+  "main": "src/index.js",
+  "compatibility_date": "2026-11-01",
+  "observability": { "enabled": true },
+
+  // App web (pasta public) servido pelo mesmo Worker; /api/* vai para o código
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+
+  // Banco de dados. Troque o database_id pelo do seu banco (veja o README)
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "financas-casal",
+      "database_id": "COLOQUE-AQUI-O-ID-DO-D1",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  // Workers AI: transcrição dos áudios (Whisper)
+  "ai": { "binding": "AI" },
+
+  "vars": {
+    // Nomes que aparecem no app, separados por vírgula
+    "PESSOAS": "Caiam,Esposa",
+    "MODELO_IA": "claude-haiku-5-5"
+  }
+
+  // Segredos (não ficam no código), cadastre no painel do Cloudflare:
+  //   APP_PIN            -> senha que vocês digitam no app
+  //   ANTHROPIC_API_KEY  -> chave da API do Claude (leitura de foto, áudio e texto)
+}

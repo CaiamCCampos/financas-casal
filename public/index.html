@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f766e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>Finanças do Casal</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <!-- Entrada com PIN -->
+  <section id="tela-pin" class="tela-pin" hidden>
+    <div class="pin-caixa">
+      <img src="/icons/icon.svg" alt="" width="64" height="64">
+      <h1>Finanças do Casal</h1>
+      <form id="form-pin">
+        <label for="pin">PIN de acesso</label>
+        <input id="pin" type="password" inputmode="numeric" autocomplete="current-password" required>
+        <button class="btn primario" type="submit">Entrar</button>
+        <p class="msg-erro" id="pin-erro" role="alert"></p>
+      </form>
+    </div>
+  </section>
+
+  <div id="app" hidden>
+    <header class="topo">
+      <div class="mes-nav" id="mes-nav">
+        <button class="icone" data-mes="-1" aria-label="Mês anterior">‹</button>
+        <strong id="mes-titulo"></strong>
+        <button class="icone" data-mes="1" aria-label="Próximo mês">›</button>
+      </div>
+      <button class="icone" id="btn-config" aria-label="Configurações">⚙︎</button>
+    </header>
+
+    <main>
+      <!-- LANÇAR -->
+      <section class="aba" id="aba-lancar">
+        <div class="captura">
+          <label class="cap-btn" for="input-foto">
+            <span class="cap-ico">📷</span><span>Foto</span>
+          </label>
+          <input id="input-foto" type="file" accept="image/*" hidden>
+          <button class="cap-btn" id="btn-audio" type="button">
+            <span class="cap-ico">🎤</span><span id="audio-rotulo">Áudio</span>
+          </button>
+          <button class="cap-btn" id="btn-texto" type="button">
+            <span class="cap-ico">✍️</span><span>Texto</span>
+          </button>
+        </div>
+
+        <form id="form-texto" class="cartao" hidden>
+          <label for="texto-livre">Escreva ou dite pelo microfone do teclado</label>
+          <textarea id="texto-livre" rows="3" placeholder="Ex.: 42 de iFood hoje no crédito"></textarea>
+          <button class="btn primario" type="submit">Ler</button>
+        </form>
+
+        <div id="processando" class="cartao processando" hidden>
+          <span class="spinner"></span> <span id="processando-txt">Lendo…</span>
+        </div>
+
+        <div id="rascunhos"></div>
+
+        <details class="cartao manual">
+          <summary>Lançar à mão</summary>
+          <div id="form-manual-slot"></div>
+        </details>
+
+        <h2 class="secao">Últimos lançamentos</h2>
+        <ul class="lista" id="ultimos"></ul>
+      </section>
+
+      <!-- RESUMO -->
+      <section class="aba" id="aba-resumo" hidden>
+        <div class="kpis">
+          <div class="kpi"><span>Receitas</span><strong id="k-receitas"></strong></div>
+          <div class="kpi"><span>Despesas</span><strong id="k-despesas"></strong></div>
+          <div class="kpi destaque"><span>Saldo do mês</span><strong id="k-saldo"></strong></div>
+        </div>
+        <div class="cartao">
+          <div class="linha-sep"><span>Gastos do dia a dia</span><strong id="k-variaveis"></strong></div>
+          <div class="linha-sep"><span>Contas fixas</span><strong id="k-fixas"></strong></div>
+          <div class="progresso"><div id="k-fixas-barra"></div></div>
+          <small id="k-fixas-txt"></small>
+        </div>
+        <h2 class="secao">Por categoria</h2>
+        <ul class="barras" id="por-categoria"></ul>
+        <h2 class="secao">Por pessoa</h2>
+        <ul class="lista" id="por-pessoa"></ul>
+      </section>
+
+      <!-- EXTRATO -->
+      <section class="aba" id="aba-extrato" hidden>
+        <div class="filtros" id="filtros">
+          <button class="chip ativo" data-filtro="todos">Todos</button>
+          <button class="chip" data-filtro="gasto">Gastos</button>
+          <button class="chip" data-filtro="receita">Receitas</button>
+        </div>
+        <ul class="lista" id="extrato"></ul>
+      </section>
+
+      <!-- CONTAS FIXAS -->
+      <section class="aba" id="aba-fixas" hidden>
+        <p class="dica">Marque quando pagar. O total entra todo mês no resumo.</p>
+        <ul class="lista" id="fixas"></ul>
+        <button class="btn" id="btn-nova-fixa" type="button">+ Nova conta fixa</button>
+      </section>
+    </main>
+
+    <nav class="abas" id="abas">
+      <button data-aba="lancar" class="ativo"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Lançar</button>
+      <button data-aba="resumo"><svg viewBox="0 0 24 24"><path d="M5 19V11M12 19V5M19 19v-6"/></svg>Resumo</button>
+      <button data-aba="extrato"><svg viewBox="0 0 24 24"><path d="M5 7h14M5 12h14M5 17h9"/></svg>Extrato</button>
+      <button data-aba="fixas"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></svg>Fixas</button>
+    </nav>
+  </div>
+
+  <!-- Editar lançamento -->
+  <dialog id="dlg-lanc">
+    <form method="dialog" id="form-lanc"></form>
+  </dialog>
+
+  <!-- Editar conta fixa -->
+  <dialog id="dlg-fixa">
+    <form method="dialog" id="form-fixa">
+      <h3 id="fixa-titulo">Conta fixa</h3>
+      <label>Nome <input name="nome" required maxlength="80"></label>
+      <label>Categoria <select name="categoria"></select></label>
+      <div class="duas">
+        <label>Valor (R$) <input name="valor" inputmode="decimal" placeholder="0,00"></label>
+        <label>Vence dia <input name="dia_vencimento" type="number" min="1" max="31"></label>
+      </div>
+      <div class="acoes">
+        <button class="btn perigo" value="excluir" id="fixa-excluir" type="submit">Excluir</button>
+        <button class="btn" value="cancelar" formnovalidate type="submit">Cancelar</button>
+        <button class="btn primario" value="salvar" type="submit">Salvar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Configurações -->
+  <dialog id="dlg-config">
+    <form method="dialog">
+      <h3>Configurações</h3>
+      <label>Quem está usando este celular
+        <select id="cfg-quem"></select>
+      </label>
+      <a class="btn" id="cfg-exportar" href="#" download>Baixar planilha do mês (CSV)</a>
+      <a class="btn" id="cfg-exportar-tudo" href="#" download>Baixar tudo (CSV)</a>
+      <p class="dica" id="cfg-ia"></p>
+      <div class="acoes">
+        <button class="btn perigo" value="sair" type="submit">Sair</button>
+        <button class="btn primario" value="ok" type="submit">Fechar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="aviso" class="aviso" role="status" hidden></div>
+
+  <template id="tpl-form-lanc">
+    <div class="form-lanc">
+      <div class="segmento">
+        <label><input type="radio" name="tipo" value="gasto" checked><span>Gasto</span></label>
+        <label><input type="radio" name="tipo" value="receita"><span>Receita</span></label>
+      </div>
+      <div class="duas">
+        <label>Valor (R$) <input name="valor" inputmode="decimal" placeholder="0,00" required></label>
+        <label>Data <input name="data" type="date" required></label>
+      </div>
+      <label>Descrição <input name="descricao" maxlength="120" placeholder="Ex.: Mercado"></label>
+      <label>Categoria <select name="categoria"></select></label>
+      <div class="duas">
+        <label>Quem <select name="quem"></select></label>
+        <label class="so-gasto">Pagamento <select name="pagamento"></select></label>
+      </div>
+    </div>
+  </template>
+
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

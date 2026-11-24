@@ -1,0 +1,16 @@
+{
+  "name": "financas-casal",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Controle financeiro do casal: lançamentos por foto, áudio ou texto",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "db:local": "wrangler d1 migrations apply financas-casal --local",
+    "db:remoto": "wrangler d1 migrations apply financas-casal --remote",
+    "deploy": "wrangler d1 migrations apply financas-casal --remote && wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
