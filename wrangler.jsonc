@@ -12,12 +12,12 @@
     "run_worker_first": ["/api/*"]
   },
 
-  // Banco de dados. Troque o database_id pelo do seu banco (veja o README)
+  // Banco de dados (já criado no Cloudflare)
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "financas-casal",
-      "database_id": "COLOQUE-AQUI-O-ID-DO-D1",
+      "database_id": "43e30653-e84f-455a-ae69-0f8ab0ecc272",
       "migrations_dir": "migrations"
     }
   ],

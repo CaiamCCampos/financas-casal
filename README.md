@@ -33,21 +33,9 @@ Valores ficam em **centavos** no banco, para não ter erro de arredondamento.
 
 Tudo cabe no plano gratuito do Cloudflare. Só a leitura por IA tem custo: alguns centavos por lançamento na API do Claude.
 
-1. **Criar o banco**
-   ```bash
-   npm install
-   npx wrangler login
-   npx wrangler d1 create financas-casal
-   ```
-   Copie o `database_id` que aparecer para o `wrangler.jsonc`.
-
+1. ~~Criar o banco~~: **feito**. O banco D1 `financas-casal` já existe e está com as tabelas criadas.
 2. **Ajustar os nomes** em `wrangler.jsonc` → `vars.PESSOAS` (ex.: `"Caiam,Maria"`).
-
-3. **Criar as tabelas no banco**
-   ```bash
-   npm run db:remoto
-   ```
-
+3. Para mudanças futuras no banco, crie um arquivo novo em `migrations/` e rode `npm run db:remoto`.
 4. **Publicar**: no painel do Cloudflare, vá em **Workers & Pages → Create → Import a repository**, escolha este repositório e use o comando de deploy `npx wrangler deploy`. A partir daí, cada `git push` publica sozinho. Ou rode `npm run deploy` direto do seu PC.
 
 5. **Cadastrar os segredos** (Worker → Settings → Variables and Secrets):
