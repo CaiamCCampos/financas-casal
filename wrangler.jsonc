@@ -27,7 +27,7 @@
 
   "vars": {
     // Nomes que aparecem no app, separados por vírgula
-    "PESSOAS": "Caiam,Esposa",
+    "PESSOAS": "Caiam,Milena",
     "MODELO_IA": "claude-haiku-5-5"
   }
 

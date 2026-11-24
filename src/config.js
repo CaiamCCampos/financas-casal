@@ -20,9 +20,9 @@ export const PAGAMENTOS = ['Pix', 'Débito', 'Crédito', 'Dinheiro'];
 
 export const FUSO = 'America/Sao_Paulo';
 
-/** Pessoas do casal, definidas na variável PESSOAS do wrangler.jsonc ("Caiam,Esposa"). */
+/** Pessoas do casal, definidas na variável PESSOAS do wrangler.jsonc ("Caiam,Milena"). */
 export function pessoas(env) {
-  return String(env.PESSOAS || 'Caiam,Esposa')
+  return String(env.PESSOAS || 'Caiam,Milena')
     .split(',')
     .map((p) => p.trim())
     .filter(Boolean);
