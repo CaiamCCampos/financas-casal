@@ -40,10 +40,15 @@ export function normalizarLancamento(b, env, cats) {
   const lista = tipo === 'receita' ? cats.receita : [...cats.gasto, CAT_CARTAO];
   const categoria = lista.includes(b.categoria) ? b.categoria : 'Outros';
   const quem = pessoas(env).includes(b.quem) ? b.quem : '';
-  const pagamento = tipo === 'gasto' && PAGAMENTOS.includes(b.pagamento) ? b.pagamento : '';
+  let pagamento = tipo === 'gasto' && PAGAMENTOS.includes(b.pagamento) ? b.pagamento : '';
   const origem = ['manual', 'foto', 'audio', 'texto', 'applepay', 'notificacao'].includes(b.origem) ? b.origem : 'manual';
-  const cartao = tipo === 'gasto' ? textoCurto(b.cartao, 40) : '';
-  const cartaoId = tipo === 'gasto' && Number(b.cartao_id) > 0 ? Number(b.cartao_id) : null;
+  // cartão só em compra no crédito (ou fatura). Pix, débito e dinheiro não vão para "Cartões",
+  // mesmo que o comprovante cite o banco (ex.: Pix pelo app do Bradesco).
+  const usaCartao = tipo === 'gasto' && (categoria === CAT_CARTAO || pagamento === 'Crédito' || pagamento === '');
+  const cartao = usaCartao ? textoCurto(b.cartao, 40) : '';
+  const cartaoId = usaCartao && Number(b.cartao_id) > 0 ? Number(b.cartao_id) : null;
+  // cartão informado sem forma de pagamento = compra no crédito
+  if (categoria !== CAT_CARTAO && !pagamento && (cartao || cartaoId)) pagamento = 'Crédito';
   if (categoria === CAT_CARTAO && !cartao && !cartaoId) erro(400, 'Diga de qual cartão é a fatura');
   // fatura nova começa como "a pagar"; o resto já nasce pago
   // null = não informado (na edição mantém o que já estava)
