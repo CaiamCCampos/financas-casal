@@ -181,14 +181,17 @@
     <form method="dialog" id="form-cartao">
       <h3 id="cartao-titulo">Cartão</h3>
       <label>Nome (ex.: Inter, Nubank) <input name="nome" required maxlength="40"></label>
-      <label>A fatura que chega num mês é das compras do
+      <div class="duas">
+        <label>Vence dia <input name="dia_vencimento" type="number" inputmode="numeric" min="1" max="31"></label>
+        <label>Fecha dia <input name="dia_fechamento" type="number" inputmode="numeric" min="1" max="31" placeholder="auto"></label>
+      </div>
+      <p class="dica" id="cartao-fecha-dica">Se não souber o fechamento, deixe em branco: o sistema usa 7 dias antes do vencimento. Compras a partir do fechamento vão para a fatura seguinte.</p>
+      <label id="cartao-ref" hidden>Sem datas, a fatura que chega num mês é das compras do
         <select name="fatura_ref">
           <option value="anterior">mês anterior (mais comum)</option>
           <option value="mesmo">mesmo mês</option>
         </select>
       </label>
-      <p class="dica">Ex.: se a fatura que vence em dezembro é das compras de novembro, deixe “mês anterior”.</p>
-      <label>Vence dia <input name="dia_vencimento" type="number" min="1" max="31"></label>
       <div class="acoes">
         <button class="btn perigo" value="excluir" id="cartao-excluir" type="submit">Excluir</button>
         <button class="btn" value="cancelar" formnovalidate type="submit">Cancelar</button>
@@ -282,7 +285,7 @@
         <label>Quem <select name="quem"></select></label>
         <label class="so-gasto">Pagamento <select name="pagamento"></select></label>
       </div>
-      <label class="campo-competencia" hidden>Fatura das compras de <input name="competencia" type="month"></label>
+      <label class="campo-competencia" hidden>Mês em que a fatura fecha (em branco = automático) <input name="competencia" type="month"></label>
       <div class="campo-cartao" hidden>
         <label>Cartão <select name="cartao"></select></label>
         <label class="cartao-novo" hidden>Nome do cartão novo <input name="cartao_novo" maxlength="40" placeholder="Ex.: C6"></label>

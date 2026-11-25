@@ -4,7 +4,7 @@
 import { pessoas, hoje, CAT_CARTAO } from './config.js';
 import { extrair } from './ia.js';
 import { salvarLancamentos } from './lancamentos.js';
-import { carregarMes, resumir } from './calculo.js';
+import { carregarMes, resumir, temDatas, periodoFatura, dataVencimento } from './calculo.js';
 import { planilhaDoMes, relatorioPessoa } from './planilha.js';
 import { pinConfere } from './erros.js';
 
@@ -301,16 +301,25 @@ async function lancar(env, msg, u, origem) {
   const comp = {};
   if (validos.some((l) => l.categoria === CAT_CARTAO)) {
     const { results } = await env.DB.prepare(
-      `SELECT id, competencia FROM lancamentos WHERE id IN (${ids.map(() => '?').join(',')})`
+      `SELECT l.id, l.competencia, c.dia_vencimento, c.dia_fechamento FROM lancamentos l
+       LEFT JOIN cartoes c ON c.id = l.cartao_id WHERE l.id IN (${ids.map(() => '?').join(',')})`
     )
       .bind(...ids)
       .all();
-    for (const x of results) comp[x.id] = x.competencia;
+    for (const x of results) comp[x.id] = x;
   }
   const linhas = validos.map((l, i) => {
     const valor = reais(Math.round(l.valor * 100));
     if (l.categoria === CAT_CARTAO) {
-      const c = comp[ids[i]];
+      const x = comp[ids[i]];
+      const dm = (iso) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
+      if (x?.competencia && temDatas(x)) {
+        const [ini, fim] = periodoFatura(x, x.competencia);
+        const ate = new Date(Date.parse(`${fim}T12:00:00Z`) - 864e5).toISOString().slice(0, 10);
+        const vence = dataVencimento(x, x.competencia);
+        return `💳 <b>Fatura ${html(l.cartao)}</b>${vence ? ` (vence ${dm(vence)})` : ''} — ${valor}\n<i>Conferência das compras de ${dm(ini)} a ${dm(ate)}: só a parte não lançada entra no total</i>`;
+      }
+      const c = x?.competencia;
       const mesTxt = c ? `de ${nomeMes(c).replace(/ de \d{4}$/, '').toLowerCase()}` : 'do mês anterior';
       return `💳 <b>Fatura ${html(l.cartao)}</b> — ${valor}\n<i>Conferência das compras ${html(mesTxt)}: só a parte não lançada entra no total</i>`;
     }

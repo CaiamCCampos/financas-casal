@@ -426,7 +426,7 @@ function itemLanc(l) {
   const fatura = l.categoria === estado.config.cat_cartao;
   return `<li class="clicavel" data-id="${l.id}">
     <div class="info"><strong>${esc(l.descricao || l.categoria)}</strong><small>${esc(detalhes)}${
-      fatura ? ` <span class="selo">conferência${l.competencia ? ` · compras de ${esc(mesCurto(l.competencia))}` : ''}</span>` : ''
+      fatura ? ` <span class="selo">conferência${l.competencia ? ` · fatura de ${esc(mesCurto(l.competencia))}` : ''}</span>` : ''
     }</small></div>
     <span class="valor ${l.tipo}">${sinal} ${reais(l.valor)}</span></li>`;
 }
@@ -699,9 +699,16 @@ function renderCartoes(r) {
     .map((c) => {
       const temFatura = c.fatura !== null;
       const cats = c.por_categoria.slice(0, 3).map((x) => `${x.categoria} ${reais(x.total)}`).join(' · ');
-      const linhaFatura = temFatura
-        ? `Fatura destas compras: ${reais(c.fatura)}${c.fatura_paga ? ' · paga' : ''}`
-        : 'Fatura destas compras ainda não lançada';
+      const dm = (iso) => (iso ? iso.slice(8, 10) + '/' + iso.slice(5, 7) : '');
+      const fecha = c.dia_fechamento || c.fechamento_calculado;
+      const linhaFatura = c.fatura_atual
+        ? `Fatura que vence ${dm(c.fatura_atual.vence) || '—'}: ${reais(c.fatura_atual.total)} em compras` +
+          (temFatura ? ` · veio ${reais(c.fatura)}${c.fatura_paga ? ' · paga' : ''}` : '') +
+          `\nPróxima (vence ${dm(c.fatura_proxima.vence) || '—'}): ${reais(c.fatura_proxima.total)} até agora` +
+          `\nFecha dia ${fecha}${c.dia_fechamento ? '' : ' (calculado)'}`
+        : temFatura
+          ? `Fatura destas compras: ${reais(c.fatura)}${c.fatura_paga ? ' · paga' : ''}`
+          : 'Fatura ainda não lançada · cadastre o vencimento para ver atual e próxima';
       const ajuste = c.nao_detalhado
         ? `<br><span>+ ${reais(c.nao_detalhado)} não detalhado entra no total</span>`
         : c.excesso
@@ -711,8 +718,8 @@ function renderCartoes(r) {
         <input type="checkbox" class="check" ${c.fatura_paga ? 'checked' : ''} ${temFatura ? '' : 'disabled'}
           aria-label="Fatura paga">
         <div class="info clicavel"><strong>${esc(c.nome)}</strong>
-          <small>${esc(linhaFatura)}${cats ? `<br>${esc(cats)}` : ''}${ajuste}</small></div>
-        <span class="valor">${c.compras ? reais(c.compras) : '<small>sem compras</small>'}</span></li>`;
+          <small>${esc(linhaFatura).replace(/\n/g, '<br>')}${cats ? `<br>${esc(cats)}` : ''}${ajuste}</small></div>
+        <span class="valor">${c.compras ? reais(c.compras) : '<small>sem compras</small>'}<br><small>no mês</small></span></li>`;
     })
     .join('');
 }
@@ -743,9 +750,24 @@ function editarCartao(c) {
   form.nome.value = c?.nome || '';
   form.fatura_ref.value = c?.fatura_ref || 'anterior';
   form.dia_vencimento.value = c?.dia_vencimento || '';
+  form.dia_fechamento.value = c?.dia_fechamento || '';
+  const atualizarDica = () => {
+    const v = Number(form.dia_vencimento.value);
+    const f = Number(form.dia_fechamento.value);
+    $('#cartao-ref').hidden = Boolean(v || f);
+    form.dia_fechamento.placeholder = v ? `auto: ${v - 7 >= 1 ? v - 7 : v + 23}` : 'auto';
+  };
+  form.dia_vencimento.oninput = atualizarDica;
+  form.dia_fechamento.oninput = atualizarDica;
+  atualizarDica();
   $('#cartao-excluir').hidden = !c;
   dlg.onclose = async () => {
-    const corpo = { nome: form.nome.value, fatura_ref: form.fatura_ref.value, dia_vencimento: form.dia_vencimento.value || null };
+    const corpo = {
+      nome: form.nome.value,
+      fatura_ref: form.fatura_ref.value,
+      dia_vencimento: form.dia_vencimento.value || null,
+      dia_fechamento: form.dia_fechamento.value || null,
+    };
     try {
       if (dlg.returnValue === 'salvar') {
         await api(c ? `/api/cartoes/${c.id}` : '/api/cartoes', { metodo: c ? 'PUT' : 'POST', corpo });

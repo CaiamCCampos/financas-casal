@@ -31,10 +31,62 @@ export const ehFatura = (l) => l.tipo === 'gasto' && l.categoria === CAT_CARTAO;
 /** O lançamento soma direto no total? (fatura nunca: ela entra só pela diferença) */
 export const soma = (l) => !ehFatura(l);
 
-/** Mês das compras que uma fatura cobre, pela regra do cartão. */
-export function competenciaPadrao(data, faturaRef) {
+// ---------- fechamento e vencimento do cartão ----------
+// A fatura é identificada pelo mês em que FECHA. Compra antes do dia de fechamento vai
+// para a fatura que fecha naquele mês; no dia do fechamento ou depois, para a do mês seguinte.
+// Tudo é calculado na hora: mudar o dia no cartão reorganiza todas as compras.
+
+const diasNoMes = (mes) => {
+  const [a, m] = mes.split('-').map(Number);
+  return new Date(Date.UTC(a, m, 0)).getUTCDate();
+};
+const comDia = (mes, dia) => `${mes}-${String(Math.min(dia, diasNoMes(mes))).padStart(2, '0')}`;
+
+/** Cartão com datas cadastradas (vencimento e/ou fechamento)? */
+export const temDatas = (c) => Boolean(c?.dia_fechamento || c?.dia_vencimento);
+
+/** Dia de fechamento: o cadastrado ou vencimento menos 7 dias. */
+export function diaFechamento(c) {
+  if (c.dia_fechamento) return c.dia_fechamento;
+  const d = c.dia_vencimento - 7;
+  return d >= 1 ? d : d + 30;
+}
+
+/** Data de fechamento da fatura que fecha no mês. */
+export const dataFechamento = (c, mes) => comDia(mes, diaFechamento(c));
+
+/** Vencimento da fatura que fecha no mês (no mesmo mês se vence depois do fechamento, senão no seguinte). */
+export function dataVencimento(c, mes) {
+  if (!c.dia_vencimento) return null;
+  return comDia(c.dia_vencimento > diaFechamento(c) ? mes : proxMes(mes), c.dia_vencimento);
+}
+
+/** Período de compras da fatura que fecha no mês: [início, fim). */
+export const periodoFatura = (c, mes) => [dataFechamento(c, mesAnterior(mes)), dataFechamento(c, mes)];
+
+/** Mês de fechamento da fatura em que cai uma compra. */
+export function faturaDaCompra(c, data) {
   const mes = String(data).slice(0, 7);
-  return faturaRef === 'mesmo' ? mes : mesAnterior(mes);
+  return data < dataFechamento(c, mes) ? mes : proxMes(mes);
+}
+
+/**
+ * Competência de uma fatura lançada (o mês ao qual ela é comparada).
+ * Cartão com vencimento: a primeira fatura que vence a partir de 5 dias antes da data lançada
+ * (ex.: lançou dia 10/11 num cartão que vence dia 27 -> fatura que vence 27/11).
+ * Sem datas: mês das compras pela regra antiga (mês anterior ou mesmo mês).
+ */
+export function competenciaPadrao(data, cartao) {
+  const mes = String(data).slice(0, 7);
+  if (temDatas(cartao)) {
+    if (cartao.dia_vencimento) {
+      // a primeira fatura que vence a partir de 5 dias antes da data (a que a pessoa está olhando/pagando)
+      const limite = new Date(Date.parse(`${data}T12:00:00Z`) - 5 * 864e5).toISOString().slice(0, 10);
+      for (let m = mesAnterior(mesAnterior(mes)); ; m = proxMes(m)) if (dataVencimento(cartao, m) >= limite) return m;
+    }
+    return data >= dataFechamento(cartao, mes) ? mes : mesAnterior(mes);
+  }
+  return cartao?.fatura_ref === 'mesmo' ? mes : mesAnterior(mes);
 }
 
 /** Contas fixas valem a partir do mês em que foram cadastradas. */
@@ -66,7 +118,7 @@ export async function carregarCategorias(db) {
 export async function carregarMes(env, mes) {
   const db = env.DB;
   const [ini, fim] = intervalo(mes);
-  const [lancs, fixas, cartoes] = await db.batch([
+  const [lancs, fixas, cartoes, comprasCartao] = await db.batch([
     // compras e receitas do mês + faturas cujas compras são deste mês
     db
       .prepare(
@@ -84,9 +136,17 @@ export async function carregarMes(env, mes) {
       )
       .bind(mes),
     db.prepare('SELECT * FROM cartoes ORDER BY nome'),
+    // compras no cartão de 2 meses antes até o mês seguinte: cobre a fatura atual e a próxima
+    db
+      .prepare(
+        `SELECT id, data, valor, cartao_id, categoria FROM lancamentos
+         WHERE tipo='gasto' AND cartao_id IS NOT NULL AND categoria <> ?1 AND data >= ?2 AND data < ?3`
+      )
+      .bind(CAT_CARTAO, `${mesAnterior(mesAnterior(mes))}-01`, `${proxMes(proxMes(mes))}-01`),
   ]);
   const cats = await carregarCategorias(db);
-  return { L: lancs.results, F: fixas.results, C: cartoes.results, cats };
+  const C = cartoes.results.map((c) => ({ ...c, _compras: comprasCartao.results.filter((l) => l.cartao_id === c.id), _mes: mes }));
+  return { L: lancs.results, F: fixas.results, C, cats };
 }
 
 const somar = (lista) => lista.reduce((t, x) => t + (x.valor || 0), 0);
@@ -102,6 +162,21 @@ export function resumirCartoes(L, C) {
     const faturas = meus.filter(ehFatura);
     const totalCompras = somar(compras);
     const fatura = faturas.length ? somar(faturas) : null;
+
+    // cartão com datas: fatura atual (fecha neste mês) e próxima (fecha no mês seguinte)
+    let atual = null;
+    let proxima = null;
+    if (temDatas(c) && c._mes && c._compras) {
+      const calc = (mes) => {
+        const [ini, fim] = periodoFatura(c, mes);
+        const itens = c._compras.filter((l) => l.data >= ini && l.data < fim);
+        return { fecha: fim, inicio: ini, vence: dataVencimento(c, mes), total: somar(itens), qtd: itens.length };
+      };
+      atual = calc(c._mes);
+      proxima = calc(proxMes(c._mes));
+    }
+    // a fatura lançada é conferida com as compras do período dela (ou do mês, se o cartão não tem datas)
+    const base = atual ? atual.total : totalCompras;
     const porCat = {};
     for (const l of compras) porCat[l.categoria] = (porCat[l.categoria] || 0) + l.valor;
     return {
@@ -109,21 +184,25 @@ export function resumirCartoes(L, C) {
       nome: c.nome,
       ativo: c.ativo,
       dia_vencimento: c.dia_vencimento,
+      dia_fechamento: c.dia_fechamento || null,
+      fechamento_calculado: temDatas(c) && !c.dia_fechamento ? diaFechamento(c) : null,
       fatura_ref: c.fatura_ref || 'anterior',
+      fatura_atual: atual,
+      fatura_proxima: proxima,
       compras: totalCompras,
       qtd_compras: compras.length,
       fatura,
       fatura_paga: faturas.length > 0 && faturas.every((f) => f.pago),
       fatura_quem: faturas[0]?.quem || '',
       // parte da fatura que não foi lançada compra a compra (entra no total)
-      nao_detalhado: fatura === null ? 0 : Math.max(0, fatura - totalCompras),
-      // compras lançadas passaram da fatura: alguma pode estar no mês errado
-      excesso: fatura === null ? 0 : Math.max(0, totalCompras - fatura),
+      nao_detalhado: fatura === null ? 0 : Math.max(0, fatura - base),
+      // compras lançadas passaram da fatura: alguma pode estar no período errado
+      excesso: fatura === null ? 0 : Math.max(0, base - fatura),
       por_categoria: Object.entries(porCat)
         .map(([categoria, total]) => ({ categoria, total }))
         .sort((a, b) => b.total - a.total),
     };
-  }).filter((c) => c.ativo || c.qtd_compras || c.fatura !== null);
+  }).filter((c) => c.ativo || c.qtd_compras || c.fatura !== null || c.fatura_atual?.qtd || c.fatura_proxima?.qtd);
 }
 
 /** Totais do mês. L = lançamentos do mês (com faturas da competência), F = fixas do mês, C = cartões. */

@@ -76,7 +76,8 @@ function abaFixas(fixas, comPagamento) {
 
 function abaCartoes(cartoes, mes) {
   const linhas = [
-    [cab('Cartão'), cab('Compras lançadas', true), cab('Fatura destas compras', true), cab('Não detalhado (soma)', true), cab('Fatura paga'), cab('Vence dia')],
+    [cab('Cartão'), cab('Compras no mês', true), cab('Fatura lançada', true), cab('Não detalhado (soma)', true), cab('Fatura paga'), cab('Vence dia'),
+     cab('Fecha dia'), cab('Fatura atual (calculada)', true), cab('Vencimento'), cab('Próxima fatura (até agora)', true), cab('Vencimento')],
   ];
   for (const c of cartoes) {
     linhas.push([
@@ -86,6 +87,11 @@ function abaCartoes(cartoes, mes) {
       { v: reais(c.nao_detalhado), s: S.moeda },
       c.fatura === null ? '' : c.fatura_paga ? 'Sim' : 'Não',
       c.dia_vencimento || '',
+      c.dia_fechamento || c.fechamento_calculado || '',
+      c.fatura_atual ? { v: reais(c.fatura_atual.total), s: S.moeda } : '',
+      c.fatura_atual?.vence ? dataBR(c.fatura_atual.vence) : '',
+      c.fatura_proxima ? { v: reais(c.fatura_proxima.total), s: S.moeda } : '',
+      c.fatura_proxima?.vence ? dataBR(c.fatura_proxima.vence) : '',
     ]);
   }
   const n = linhas.length;
@@ -98,7 +104,8 @@ function abaCartoes(cartoes, mes) {
   linhas.push([]);
   linhas.push([{ v: `Compras de ${nomeMes(mes)} em cada cartão x a fatura que cobre essas compras.`, s: S.sutil }]);
   linhas.push([{ v: 'As compras já somam no total. Da fatura, só entra a parte que não foi lançada (não detalhado).', s: S.sutil }]);
-  return { nome: 'Cartões', linhas, larguras: [18, 17, 20, 19, 11, 10], congelarLinhas: 1 };
+  linhas.push([{ v: 'Fatura atual = compras do fechamento anterior até a véspera do fechamento deste mês. Próxima = do fechamento deste mês em diante. Só informativo: não soma de novo.', s: S.sutil }]);
+  return { nome: 'Cartões', linhas, larguras: [18, 17, 17, 19, 11, 10, 10, 22, 12, 24, 12], congelarLinhas: 1 };
 }
 
 /** Matriz categoria x forma de pagamento: "quanto de Uber no Inter" e "quanto de Uber no total". */
@@ -265,6 +272,7 @@ export async function planilhaCompleta(env) {
   const Ftodas = fixas.results;
   const C = cartoes.results;
   const mesDe = (l) => (ehFatura(l) ? l.competencia || l.data.slice(0, 7) : l.data.slice(0, 7));
+  const comprasCartao = L.filter((l) => l.tipo === 'gasto' && l.cartao_id && !ehFatura(l));
 
   // meses do primeiro ao último movimento (no mínimo até o mês atual)
   const atual = hoje().slice(0, 7);
@@ -276,7 +284,8 @@ export async function planilhaCompleta(env) {
 
   const porMes = meses.map((m) => {
     const Lm = L.filter((l) => mesDe(l) === m);
-    return { L: Lm, r: resumir(env, Lm, fixasDoMes(Ftodas, m), C, cats) };
+    const Cm = C.map((c) => ({ ...c, _mes: m, _compras: comprasCartao.filter((l) => l.cartao_id === c.id) }));
+    return { L: Lm, r: resumir(env, Lm, fixasDoMes(Ftodas, m), Cm, cats) };
   });
 
   const nM = meses.length;

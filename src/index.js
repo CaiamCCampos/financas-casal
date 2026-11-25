@@ -33,9 +33,17 @@ function normalizarCartao(b) {
   const nome = textoCurto(b.nome, 40);
   if (!nome) erro(400, 'Informe o nome do cartão');
   const faturaRef = b.fatura_ref === 'mesmo' ? 'mesmo' : 'anterior';
-  const dia = b.dia_vencimento ? Number(b.dia_vencimento) : null;
-  if (dia !== null && !(Number.isInteger(dia) && dia >= 1 && dia <= 31)) erro(400, 'Dia de vencimento inválido');
-  return { nome, fatura_ref: faturaRef, dia_vencimento: dia };
+  const diaDe = (v, oque) => {
+    const d = v ? Number(v) : null;
+    if (d !== null && !(Number.isInteger(d) && d >= 1 && d <= 31)) erro(400, `Dia de ${oque} inválido`);
+    return d;
+  };
+  return {
+    nome,
+    fatura_ref: faturaRef,
+    dia_vencimento: diaDe(b.dia_vencimento, 'vencimento'),
+    dia_fechamento: diaDe(b.dia_fechamento, 'fechamento'),
+  };
 }
 
 function nomeCategoria(v) {
@@ -89,7 +97,7 @@ async function api(req, env, url) {
       ...(await carregarCategorias(db).then((c) => ({ categorias: c.gasto, categorias_receita: c.receita }))),
       pagamentos: PAGAMENTOS,
       pessoas: pessoas(env),
-      cartoes: (await db.prepare('SELECT id, nome, fatura_ref FROM cartoes WHERE ativo=1 ORDER BY nome').all()).results,
+      cartoes: (await db.prepare('SELECT id, nome, fatura_ref, dia_vencimento, dia_fechamento FROM cartoes WHERE ativo=1 ORDER BY nome').all()).results,
       cat_cartao: CAT_CARTAO,
       cat_nao_detalhado: CAT_NAO_DETALHADO,
       hoje: hoje(),
@@ -199,12 +207,12 @@ async function api(req, env, url) {
     const existe = await db.prepare('SELECT id FROM cartoes WHERE nome = ?1 COLLATE NOCASE').bind(c.nome).first();
     const r = existe
       ? await db
-          .prepare('UPDATE cartoes SET ativo=1, fatura_ref=?1, dia_vencimento=?2 WHERE id=?3 RETURNING *')
-          .bind(c.fatura_ref, c.dia_vencimento, existe.id)
+          .prepare('UPDATE cartoes SET ativo=1, fatura_ref=?1, dia_vencimento=?2, dia_fechamento=?4 WHERE id=?3 RETURNING *')
+          .bind(c.fatura_ref, c.dia_vencimento, existe.id, c.dia_fechamento)
           .first()
       : await db
-          .prepare('INSERT INTO cartoes (nome, fatura_ref, dia_vencimento) VALUES (?1, ?2, ?3) RETURNING *')
-          .bind(c.nome, c.fatura_ref, c.dia_vencimento)
+          .prepare('INSERT INTO cartoes (nome, fatura_ref, dia_vencimento, dia_fechamento) VALUES (?1, ?2, ?3, ?4) RETURNING *')
+          .bind(c.nome, c.fatura_ref, c.dia_vencimento, c.dia_fechamento)
           .first();
     return json(r, 201);
   }
@@ -212,8 +220,8 @@ async function api(req, env, url) {
   if (m && metodo === 'PUT') {
     const c = normalizarCartao(await req.json().catch(() => erro(400, 'JSON inválido')));
     const r = await db
-      .prepare('UPDATE cartoes SET nome=?1, fatura_ref=?2, dia_vencimento=?3 WHERE id=?4 RETURNING *')
-      .bind(c.nome, c.fatura_ref, c.dia_vencimento, Number(m[1]))
+      .prepare('UPDATE cartoes SET nome=?1, fatura_ref=?2, dia_vencimento=?3, dia_fechamento=?5 WHERE id=?4 RETURNING *')
+      .bind(c.nome, c.fatura_ref, c.dia_vencimento, Number(m[1]), c.dia_fechamento)
       .first()
       .catch(() => erro(409, 'Já existe um cartão com esse nome'));
     if (!r) erro(404, 'Cartão não encontrado');

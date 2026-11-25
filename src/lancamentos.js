@@ -79,8 +79,8 @@ export async function prepararLancamento(env, b, cats) {
   if (l.categoria === CAT_CARTAO) {
     if (!l.cartaoId) erro(400, 'Diga de qual cartão é a fatura');
     if (!l.competencia) {
-      const c = await db.prepare('SELECT fatura_ref FROM cartoes WHERE id=?1').bind(l.cartaoId).first();
-      l.competencia = competenciaPadrao(l.data, c?.fatura_ref);
+      const c = await db.prepare('SELECT fatura_ref, dia_vencimento, dia_fechamento FROM cartoes WHERE id=?1').bind(l.cartaoId).first();
+      l.competencia = competenciaPadrao(l.data, c);
     }
   } else {
     l.competencia = null;
