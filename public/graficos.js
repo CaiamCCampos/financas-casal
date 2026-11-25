@@ -411,3 +411,58 @@ export function pessoas(box, lista, aoTocar) {
   };
   depois(() => box.querySelectorAll('.g-parte').forEach((d) => d.classList.add('cheio')));
 }
+
+// ---------- gastos de cada dia: barras horizontais finas ----------
+const SEMANA = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+/**
+ * Uma linha por dia com gasto (mais recente primeiro). Mostra 10 e um "ver todos".
+ * Tocar no dia abre as compras dele. lancs = lançamentos do mês (para o detalhe).
+ */
+export function diasLista(box, dias, { mes, ultimoDia, lancs }) {
+  const limite = ultimoDia || dias.length;
+  const comGasto = [];
+  for (let d = limite; d >= 1; d--) if (dias[d - 1] > 0) comGasto.push(d);
+  if (!comGasto.length) {
+    box.innerHTML = '<p class="g-vazio">Nenhum gasto do dia a dia ainda neste mês.</p>';
+    return;
+  }
+  const max = Math.max(...comGasto.map((d) => dias[d - 1]));
+  const LIM = 10;
+  const iso = (d) => `${mes}-${String(d).padStart(2, '0')}`;
+  const sem = (d) => SEMANA[new Date(`${iso(d)}T12:00:00Z`).getUTCDay()];
+  const linha = (d, extra) => `<li class="g-dia${d === ultimoDia ? ' hoje' : ''}${extra ? ' extra' : ''}" data-d="${d}">
+      <button type="button" class="g-dia-btn g-alvo" aria-expanded="false">
+        <span class="g-dia-rot"><small>${sem(d)}</small>${d}</span>
+        <span class="g-dia-trilho"><span class="g-enche${d === ultimoDia ? ' s1' : ''}" style="--w:${(dias[d - 1] / max) * 100}%"></span></span>
+        <b>${reais(dias[d - 1])}</b>
+      </button>
+      <div class="g-dia-det"><ul></ul></div>
+    </li>`;
+  box.innerHTML =
+    `<ul class="g-dias">${comGasto.map((d, i) => linha(d, i >= LIM)).join('')}</ul>` +
+    (comGasto.length > LIM ? `<button type="button" class="g-mais">Ver todos os ${comGasto.length} dias</button>` : '');
+  const ul = box.querySelector('.g-dias');
+  ul.onclick = (e) => {
+    const li = e.target.closest('.g-dia');
+    if (!li) return;
+    const aberto = li.classList.toggle('aberto');
+    li.querySelector('.g-dia-btn').setAttribute('aria-expanded', aberto);
+    if (aberto) {
+      const d = Number(li.dataset.d);
+      const itens = lancs.filter((l) => l.tipo === 'gasto' && l.data === iso(d) && l.categoria !== 'Cartão de crédito');
+      li.querySelector('.g-dia-det ul').innerHTML = itens
+        .map(
+          (l) => `<li><span>${esc(l.descricao || l.categoria)}<small>${esc([l.categoria, l.cartao || l.pagamento, l.quem].filter(Boolean).join(' · '))}</small></span><b>${reais(l.valor)}</b></li>`
+        )
+        .join('');
+    }
+  };
+  const mais = box.querySelector('.g-mais');
+  if (mais)
+    mais.onclick = () => {
+      const todos = ul.classList.toggle('todos');
+      mais.textContent = todos ? 'Mostrar menos' : `Ver todos os ${comGasto.length} dias`;
+      if (todos) depois(() => ul.querySelectorAll('.extra .g-enche').forEach((x) => x.classList.add('cheio')));
+    };
+  depois(() => ul.querySelectorAll('.g-dia:not(.extra) .g-enche').forEach((x) => x.classList.add('cheio')));
+}

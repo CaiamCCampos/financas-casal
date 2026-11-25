@@ -547,9 +547,10 @@ function desenharPainel(r, g) {
   delta($('#k-despesas-delta'), t.despesas, g.anterior.despesas, { menorEhMelhor: true });
 
   // gastos de cada dia
-  const gastoDias = g.dias.slice(0, g.ultimo_dia || g.dias.length).reduce((a, b) => a + b, 0);
-  $('#g-dias-sub').textContent = gastoDias ? `${reais(gastoDias)} no dia a dia` : '';
-  G.colunasDias($('#g-dias'), g.dias, { ultimoDia: g.ultimo_dia, mes: g.mes });
+  const diasCorridos = g.ultimo_dia || g.dias.length;
+  const gastoDias = g.dias.slice(0, diasCorridos).reduce((a, b) => a + b, 0);
+  $('#g-dias-sub').textContent = gastoDias ? `${reais(gastoDias)} no mês · média ${reais(Math.round(gastoDias / diasCorridos))}/dia` : '';
+  G.diasLista($('#g-dias'), g.dias, { ultimoDia: g.ultimo_dia, mes: g.mes, lancs: lancamentosMes });
 
   // categorias
   if (g.categorias.length) G.rosca($('#g-rosca'), $('#g-rosca-leg'), g.categorias, [...estado.config.categorias, 'Cartão (não detalhado)']);

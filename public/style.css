@@ -398,3 +398,32 @@ dialog h3 { margin: 0 0 4px; }
 .barras .trilho .g-enche { background: var(--marca); }
 .barras .trilho .g-enche.s1 { background: var(--s1); }
 .barras .trilho .g-enche.s2 { background: var(--s2); }
+
+/* gastos de cada dia: lista de barras finas */
+.g-dias { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
+.g-dia.extra { display: none; }
+.g-dias.todos .g-dia.extra { display: block; }
+.g-dia-btn {
+  width: 100%; display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: 10px;
+  background: none; border: 0; padding: 7px 2px; text-align: left; cursor: pointer; border-radius: 8px;
+}
+.g-dia-btn:active { background: var(--fundo); }
+.g-dia-rot { font-weight: 650; font-variant-numeric: tabular-nums; font-size: .92rem; line-height: 1.1; }
+.g-dia-rot small { display: block; color: var(--suave); font-weight: 400; font-size: .7rem; text-transform: lowercase; }
+.g-dia.hoje .g-dia-rot small { color: var(--s1); font-weight: 600; }
+.g-dia-trilho { height: 6px; background: var(--fundo); border-radius: 99px; overflow: hidden; }
+.g-dia-trilho .g-enche { display: block; }
+.g-dia-btn b { font-variant-numeric: tabular-nums; font-size: .9rem; font-weight: 600; }
+.g-dia-det { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .35s var(--facil); }
+.g-dia.aberto .g-dia-det { grid-template-rows: 1fr; }
+.g-dia-det ul { overflow: hidden; list-style: none; margin: 0 0 0 54px; padding: 0; }
+.g-dia-det li { display: flex; justify-content: space-between; gap: 8px; padding: 6px 0; border-top: 1px dashed var(--linha); font-size: .85rem; }
+.g-dia-det li:last-child { margin-bottom: 6px; }
+.g-dia-det small { display: block; color: var(--suave); font-size: .72rem; }
+.g-dia-det b { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.g-mais { width: 100%; margin-top: 6px; background: var(--fundo); border: 0; border-radius: 10px; padding: 9px; color: var(--marca); font-weight: 600; font-size: .85rem; cursor: pointer; }
+
+/* rosca um pouco menor */
+.g-rosca-box { max-width: 190px; }
+.g-dia-btn { grid-template-columns: 40px minmax(0, 1fr) 92px; }
+.g-dia-btn b { text-align: right; }
