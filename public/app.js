@@ -197,6 +197,7 @@ function lerFormLanc(f, origem = 'manual') {
     quem: $('[name=quem]', f).value,
     pagamento: tipo === 'gasto' ? $('[name=pagamento]', f).value : '',
     cartao: lerCartao(f, tipo),
+    cartao_novo: tipo === 'gasto' && !$('.campo-cartao', f).hidden && $('[name=cartao]', f).value === '__novo',
     competencia: $('.campo-competencia', f).hidden ? null : $('[name=competencia]', f).value || null,
     origem,
     conta_fixa: f.dataset.contaFixa && $('[name=usar_conta_fixa]', f)?.checked ? JSON.parse(f.dataset.contaFixa) : undefined,
@@ -669,7 +670,7 @@ function renderVariaveis(r) {
     lista
       .map(
         (v, i) => `<li class="clicavel" data-var="${esc(v.categoria)}"><div class="info"><strong>${esc(v.categoria)}</strong>
-        <small class="formas">${v.por_forma.map((f) => `${esc(f.forma)} ${reais(f.total)}`).join(' · ')}</small></div>
+        <small class="formas">${v.por_estabelecimento.slice(0, 3).map((f) => `${esc(f.estabelecimento)} ${reais(f.total)}`).join(' · ')}</small></div>
         <span class="valor">${reais(v.total)}</span></li>`
       )
       .join('') +
@@ -685,13 +686,17 @@ $('#variaveis').addEventListener('click', (e) => {
   const dlg = $('#dlg-variavel');
   $('#variavel-titulo').textContent = v.categoria;
   $('#variavel-sub').textContent = `${nomeMes(estado.mes)} · ${reais(v.total)} em ${v.qtd} lançamento(s)`;
-  const maior = Math.max(1, ...v.por_forma.map((f) => f.total));
-  $('#variavel-formas').innerHTML = v.por_forma
-    .map(
-      (f) => `<li><div class="topo-barra"><span>${esc(f.forma)}</span><b>${reais(f.total)}</b></div>
+  const barras = (lista, nome) => {
+    const maior = Math.max(1, ...lista.map((f) => f.total));
+    return lista
+      .map(
+        (f) => `<li><div class="topo-barra"><span>${esc(f[nome])}</span><b>${reais(f.total)}</b></div>
       <div class="trilho"><div style="width:${(f.total / maior) * 100}%"></div></div></li>`
-    )
-    .join('');
+      )
+      .join('');
+  };
+  $('#variavel-lojas').innerHTML = barras(v.por_estabelecimento, 'estabelecimento');
+  $('#variavel-formas').innerHTML = barras(v.por_forma, 'forma');
   $('#variavel-itens').innerHTML = lancamentosMes
     .filter((l) => l.tipo === 'gasto' && l.categoria === v.categoria)
     .map(

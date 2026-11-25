@@ -5,7 +5,7 @@
 import { CAT_CARTAO, hoje, pessoas } from './config.js';
 import { extrair } from './ia.js';
 import { paraCentavos, salvarLancamentos, textoCurto } from './lancamentos.js';
-import { carregarCategorias } from './calculo.js';
+import { carregarCategorias, resolverCartao } from './calculo.js';
 import { avisarNoTelegram } from './telegram.js';
 import { separarContasFixas, textoBaixa } from './fixas.js';
 import { receberNotificacao } from './notificacao.js';
@@ -150,9 +150,17 @@ async function receberApplePay(env, form, quem) {
   const centavos = paraCentavos(form.get('valor'));
   if (!(centavos > 0)) return `⚠️ Apple Pay: não entendi o valor "${textoCurto(form.get('valor'), 30)}".`;
   const valor = centavos / 100;
-  const estabelecimento = textoCurto(form.get('estabelecimento') || form.get('comerciante'), 80) || 'Compra Apple Pay';
-  const nomeCartao = textoCurto(form.get('cartao'), 60);
+  let estabelecimento = textoCurto(form.get('estabelecimento') || form.get('comerciante') || form.get('nome'), 80);
+  let nomeCartao = textoCurto(form.get('cartao'), 60);
   const debito = /d[eé]bito/i.test(nomeCartao);
+  // o campo "cartao" às vezes chega com o nome da loja (variável "Nome" da transação):
+  // se não for um cartão cadastrado, ele vira o estabelecimento
+  const cartaoId = nomeCartao ? await resolverCartao(env.DB, nomeCartao) : null;
+  if (nomeCartao && !cartaoId) {
+    if (!estabelecimento) estabelecimento = nomeCartao;
+    nomeCartao = '';
+  }
+  estabelecimento = estabelecimento || 'Compra Apple Pay';
 
   const item = {
     tipo: 'gasto',
@@ -162,7 +170,8 @@ async function receberApplePay(env, form, quem) {
     quem,
     origem: 'applepay',
     categoria: await categoriaPara(env, estabelecimento, valor),
-    pagamento: debito ? 'Débito' : 'Crédito',
+    // crédito só quando o cartão cadastrado foi reconhecido; senão a forma fica em branco
+    pagamento: debito ? 'Débito' : nomeCartao ? 'Crédito' : '',
     cartao: debito ? '' : nomeCartao,
   };
   if (await jaLancado(env, item)) return `ℹ️ ${estabelecimento} (${moeda.format(valor)}) já estava lançado.`;

@@ -175,7 +175,11 @@ function nomeDoCartao(env, falado) {
   const lista = env._cartoes || [];
   return (
     lista.find((c) => chaveCartao(c) === chave) ||
-    lista.find((c) => chaveCartao(c) && (chave.includes(chaveCartao(c)) || chaveCartao(c).includes(chave))) ||
+    lista.find((c) => {
+      const k = chaveCartao(c).split(' ').filter(Boolean);
+      const w = chave.split(' ');
+      return k.length && (k.every((x) => w.includes(x)) || w.every((x) => k.includes(x)));
+    }) ||
     nome
   );
 }

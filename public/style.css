@@ -253,3 +253,5 @@ dialog h3 { margin: 0 0 4px; }
 
 .conta-fixa-aviso { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; background: var(--fundo); font-size: .9rem; }
 .conta-fixa-aviso input { width: auto; flex: none; }
+
+.sub-titulo { margin: 6px 0 -2px; font-size: .85rem; color: var(--suave); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }

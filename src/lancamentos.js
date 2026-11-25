@@ -68,12 +68,14 @@ export function normalizarLancamento(b, env, cats) {
     pago,
     // fatura: mês das compras que ela cobre (se não vier, segue a regra do cartão)
     competencia: categoria === CAT_CARTAO && RE_MES.test(b.competencia || '') ? b.competencia : null,
+    // só o app cria cartão novo ("+ Outro cartão…"); IA, Apple Pay e notificação usam os cadastrados
+    criarCartao: b.cartao_novo === true,
   };
 }
 
 export async function idDoCartao(db, l) {
   if (l.cartaoId) return l.cartaoId;
-  if (l.cartao) return resolverCartao(db, l.cartao);
+  if (l.cartao) return resolverCartao(db, l.cartao, l.criarCartao);
   return null;
 }
 
@@ -83,7 +85,7 @@ export async function prepararLancamento(env, b, cats) {
   const l = normalizarLancamento(b, env, cats);
   l.cartaoId = await idDoCartao(db, l);
   if (l.categoria === CAT_CARTAO) {
-    if (!l.cartaoId) erro(400, 'Diga de qual cartão é a fatura');
+    if (!l.cartaoId) erro(400, l.cartao ? `O cartão "${l.cartao}" não está cadastrado. Crie em Contas › Cartões.` : 'Diga de qual cartão é a fatura');
     if (!l.competencia) {
       const c = await db.prepare('SELECT fatura_ref, dia_vencimento, dia_fechamento FROM cartoes WHERE id=?1').bind(l.cartaoId).first();
       l.competencia = competenciaPadrao(l.data, c);

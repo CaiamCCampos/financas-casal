@@ -152,6 +152,14 @@ export async function carregarMes(env, mes) {
 
 const somar = (lista) => lista.reduce((t, x) => t + (x.valor || 0), 0);
 
+/** Estabelecimento do gasto (a descrição). Sem descrição, ou genérica, vai para "Outros". */
+export function estabelecimentoDe(l) {
+  const d = String(l.descricao || '').trim();
+  const n = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  if (!d || n(d) === n(l.categoria) || /^compra( apple pay)?$/i.test(d)) return 'Outros';
+  return d;
+}
+
 /** Forma de pagamento na visão de contas variáveis: nome do cartão, Pix, Débito... */
 export const formaDe = (l) => l.cartao || l.pagamento || 'Sem forma';
 
@@ -232,6 +240,14 @@ export function resumir(env, L, F, C, cats) {
     const itens = compras.filter((l) => l.categoria === categoria);
     const formas = {};
     for (const l of itens) formas[formaDe(l)] = (formas[formaDe(l)] || 0) + l.valor;
+    const lojas = {};
+    for (const l of itens) {
+      const e = estabelecimentoDe(l);
+      const k = e.toLowerCase();
+      lojas[k] = lojas[k] || { estabelecimento: e, total: 0, qtd: 0 };
+      lojas[k].total += l.valor;
+      lojas[k].qtd += 1;
+    }
     return {
       categoria,
       total: somar(itens),
@@ -239,6 +255,7 @@ export function resumir(env, L, F, C, cats) {
       por_forma: Object.entries(formas)
         .map(([forma, total]) => ({ forma, total }))
         .sort((a, b) => b.total - a.total),
+      por_estabelecimento: Object.values(lojas).sort((a, b) => (a.estabelecimento === 'Outros') - (b.estabelecimento === 'Outros') || b.total - a.total),
     };
   });
 
@@ -297,7 +314,8 @@ export function chaveCartao(nome) {
 const APELIDOS = { nu: 'nubank', 'nu bank': 'nubank' };
 
 /** Acha o cartão pelo nome (tolerante a "Banco Inter", "nubank", "itau"); se não existir, cria. */
-export async function resolverCartao(db, nome) {
+/** Acha um cartão cadastrado pelo nome. Só cria se criar = true (cartão novo digitado no app). */
+export async function resolverCartao(db, nome, criar = false) {
   let chave = chaveCartao(nome);
   if (!chave) return null;
   chave = APELIDOS[chave] || chave;
@@ -305,13 +323,17 @@ export async function resolverCartao(db, nome) {
   const achado =
     results.find((c) => chaveCartao(c.nome) === chave) ||
     results.find((c) => {
-      const k = chaveCartao(c.nome);
-      return k && (chave.includes(k) || k.includes(chave));
+      // por palavras inteiras: "Nubank Ultravioleta" acha "Nubank", mas "Interlagos" não acha "Inter"
+      const k = chaveCartao(c.nome).split(' ').filter(Boolean);
+      const w = chave.split(' ');
+      return k.length && (k.every((x) => w.includes(x)) || w.every((x) => k.includes(x)));
     });
   if (achado) {
+    if (!achado.ativo && !criar) return null;
     if (!achado.ativo) await db.prepare('UPDATE cartoes SET ativo=1 WHERE id=?1').bind(achado.id).run();
     return achado.id;
   }
+  if (!criar) return null;
   const PARADAS = new Set(['cartao', 'cartoes', 'credito', 'de', 'do', 'da', 'banco', 'fatura', 'no', 'na']);
   const semAcento = (w) => w.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const bonito = String(nome)
