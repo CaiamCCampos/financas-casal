@@ -14,7 +14,18 @@ const TEM_VALOR = /\d+,\d{2}|R\$\s*\d/;
 // não são gasto do dia a dia: dinheiro entrando, fatura (já é conferência), compra que não passou,
 // agendamento (ainda não saiu), investimento/guardar dinheiro
 const ENTRADA = /\b(voc[eê] recebeu|recebid[oa]|recebeu (um )?pix|caiu na (sua )?conta|dep[oó]sito recebido|estorno|reembolso|cashback|rendimento|sal[aá]rio)\b/i;
-const IGNORAR = /\b(fatura|negad[oa]|recusad[oa]|n[aã]o aprovad[oa]|cancelad[oa]|agendad[oa]|aplica[çc][aã]o|investiment|resgate|cdb|poupan[çc]a|caixinha|cofrinho|limite dispon)/i;
+// "fatura" só quando o assunto é a fatura (fechou, venceu, pagamento da fatura);
+// compra que cita "limite disponível" ou "lançada na fatura" continua valendo
+const IGNORAR = new RegExp(
+  [
+    'fatura (fechou|fechada|est[aá] (aberta|fechada|dispon)|vence|venceu|vencida|dispon[ií]vel|paga\\b)',
+    'pagamento (da|de) (sua )?fatura',
+    'negad[oa]', 'recusad[oa]', 'n[aã]o (foi )?aprovad[oa]', 'cancelad[oa]', 'agendad[oa]', 'programad[oa]',
+    'aplica[çc][aã]o', 'investiment', 'resgate', '\\bcdb\\b', 'poupan[çc]a', 'caixinha', 'cofrinho',
+    'US\\$', 'c[oó]digo de (seguran|verifica)', 'token',
+  ].join('|'),
+  'i'
+);
 
 const normal = (t) =>
   String(t || '')
@@ -50,6 +61,19 @@ async function jaEntrou(env, valor, data) {
   return Boolean(r);
 }
 
+/** Categoria da última compra com a mesma descrição (se você corrigiu no app, as próximas seguem). */
+async function categoriaAnterior(env, descricao) {
+  const chave = normal(descricao).replace(/[^a-z0-9]+/g, ' ').trim();
+  if (!chave) return null;
+  const { results } = await env.DB.prepare(
+    `SELECT descricao, categoria FROM lancamentos WHERE tipo='gasto' AND categoria <> ?1 ORDER BY id DESC LIMIT 300`
+  )
+    .bind(CAT_CARTAO)
+    .all();
+  const igual = results.find((r) => normal(r.descricao).replace(/[^a-z0-9]+/g, ' ').trim() === chave);
+  return igual?.categoria || null;
+}
+
 export async function receberNotificacao(env, form, quem) {
   const app = textoCurto(form.get('app'), 40);
   const bruto = [form.get('titulo'), form.get('corpo'), form.get('texto')]
@@ -66,8 +90,12 @@ export async function receberNotificacao(env, form, quem) {
   entrada.append('tipo', 'texto');
   entrada.append(
     'texto',
-    `Notificação do app ${app || 'do banco'}. Registre SÓ se for saída de dinheiro (compra, Pix enviado, pagamento, débito, saque); ` +
-      `se for dinheiro entrando, devolva itens vazios. Se for compra no crédito sem cartão escrito, o cartão é ${app || 'o do app'}.\n\n${bruto}`
+    `Notificação do app ${app || 'do banco'}. Registre SÓ se for saída de dinheiro; se for dinheiro entrando, devolva itens vazios.\n` +
+      `- Compra no cartão de CRÉDITO (ou só "compra aprovada" num app de cartão): pagamento "Crédito" e cartao "${app || 'o do app'}".\n` +
+      `- Compra no DÉBITO: pagamento "Débito" e cartao "".\n` +
+      `- Pix enviado/transferência: pagamento "Pix", cartao "", contraparte = quem recebeu.\n` +
+      `- Boleto/conta paga: pagamento "Débito", cartao "". Saque: categoria "Outros", pagamento "Dinheiro".\n` +
+      `- descricao: o nome do estabelecimento limpo (ex.: "UBER *TRIP" -> "Uber", "IFD*IFOOD" -> "iFood", "PAG*Padaria Sol" -> "Padaria Sol").\n\n${bruto}`
   );
   const r = await extrair(env, entrada);
   if (r.erro) {
@@ -82,7 +110,8 @@ export async function receberNotificacao(env, form, quem) {
     if (entreOCasal(env, i)) continue;
     const valor = Math.round(i.valor * 100);
     if (await jaEntrou(env, valor, i.data)) continue;
-    salvar.push({ ...i, quem: i.quem || quem, origem: 'notificacao' });
+    const cat = await categoriaAnterior(env, i.descricao);
+    salvar.push({ ...i, categoria: cat || i.categoria, quem: i.quem || quem, origem: 'notificacao' });
   }
   if (!salvar.length) return '';
 
