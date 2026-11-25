@@ -85,7 +85,8 @@ export async function receberNotificacao(env, form, quem) {
     .slice(0, 1000);
 
   // filtros baratos antes da IA (economiza a cota grátis)
-  if (!bruto || !TEM_VALOR.test(bruto) || NAO_CONTA.test(bruto) || IGNORAR.test(bruto)) return '';
+  const plano = bruto.replace(/\s+/g, ' '); // título e corpo numa linha só, para os filtros
+  if (!bruto || !TEM_VALOR.test(plano) || NAO_CONTA.test(plano) || IGNORAR.test(plano)) return '';
 
   const entrada = new FormData();
   entrada.append('quem', quem);
