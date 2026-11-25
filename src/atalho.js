@@ -8,6 +8,7 @@ import { paraCentavos, salvarLancamentos, textoCurto } from './lancamentos.js';
 import { carregarCategorias } from './calculo.js';
 import { avisarNoTelegram } from './telegram.js';
 import { separarContasFixas, textoBaixa } from './fixas.js';
+import { receberNotificacao } from './notificacao.js';
 
 const moeda = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 const dataBR = (iso) => iso.split('-').reverse().slice(0, 2).join('/');
@@ -32,6 +33,8 @@ export async function receberDoAtalho(env, form) {
   }
   // automação "Transação" da Carteira (Apple Pay): vem valor + estabelecimento + cartão
   if (form.get('valor') !== null && form.get('valor') !== undefined) return receberApplePay(env, form, quem);
+  // automação de notificação do banco: vem titulo/corpo/app
+  if (form.get('titulo') !== null || form.get('corpo') !== null || form.get('app') !== null) return receberNotificacao(env, form, quem);
   const arquivo = form.get('arquivo');
   const texto = String(form.get('texto') || '').trim();
   const entrada = new FormData();

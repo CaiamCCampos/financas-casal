@@ -4,6 +4,7 @@
 // (A conta fixa já entra no total todo mês; criar um gasto contaria duas vezes.)
 
 import { paraCentavos } from './lancamentos.js';
+import { substituirNotificacao } from './notificacao.js';
 
 const PARADAS = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'a', 'o', 'conta', 'pagamento', 'pgto', 'pix', 'ref', 'referente']);
 
@@ -110,6 +111,7 @@ export async function separarContasFixas(env, itens) {
       lancar.push(i);
       continue;
     }
+    await substituirNotificacao(env, paraCentavos(i.valor), i.data);
     const mes = String(i.data).slice(0, 7);
     const total = paraCentavos(i.valor);
     if (!(total > 0)) {

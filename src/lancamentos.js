@@ -1,6 +1,7 @@
 // Validação e gravação de lançamentos (usado pelo app e pelo robô do Telegram).
 
 import { PAGAMENTOS, CAT_CARTAO, pessoas, hoje } from './config.js';
+import { substituirNotificacao } from './notificacao.js';
 import { resolverCartao, carregarCategorias, competenciaPadrao } from './calculo.js';
 import { erro } from './erros.js';
 
@@ -40,7 +41,7 @@ export function normalizarLancamento(b, env, cats) {
   const categoria = lista.includes(b.categoria) ? b.categoria : 'Outros';
   const quem = pessoas(env).includes(b.quem) ? b.quem : '';
   const pagamento = tipo === 'gasto' && PAGAMENTOS.includes(b.pagamento) ? b.pagamento : '';
-  const origem = ['manual', 'foto', 'audio', 'texto', 'applepay'].includes(b.origem) ? b.origem : 'manual';
+  const origem = ['manual', 'foto', 'audio', 'texto', 'applepay', 'notificacao'].includes(b.origem) ? b.origem : 'manual';
   const cartao = tipo === 'gasto' ? textoCurto(b.cartao, 40) : '';
   const cartaoId = tipo === 'gasto' && Number(b.cartao_id) > 0 ? Number(b.cartao_id) : null;
   if (categoria === CAT_CARTAO && !cartao && !cartaoId) erro(400, 'Diga de qual cartão é a fatura');
@@ -107,5 +108,9 @@ export async function salvarLancamentos(env, lista) {
       stmt.bind(l.tipo, l.data, l.descricao, l.categoria, l.valor, l.quem, l.pagamento, l.origem, l.cartaoId, l.pago, l.competencia)
     )
   );
+  // o mesmo gasto chegou antes pela notificação do banco: fica só o lançamento melhor (comprovante/Apple Pay/app)
+  for (const l of itens) {
+    if (l.tipo === 'gasto' && l.origem !== 'notificacao') await substituirNotificacao(env, l.valor, l.data);
+  }
   return res.map((r) => r.results[0].id);
 }
