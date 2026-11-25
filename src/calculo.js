@@ -130,7 +130,8 @@ export async function carregarMes(env, mes) {
       .bind(ini, fim, CAT_CARTAO, mes),
     db
       .prepare(
-        `SELECT f.*, CASE WHEN p.conta_id IS NULL THEN 0 ELSE 1 END AS paga
+        `SELECT f.*, CASE WHEN p.conta_id IS NULL THEN 0 ELSE 1 END AS paga,
+                f.valor AS valor_cadastrado, COALESCE(p.valor, f.valor) AS valor
          FROM contas_fixas f LEFT JOIN fixas_pagas p ON p.conta_id=f.id AND p.mes=?1
          WHERE f.ativa=1 AND substr(f.criado_em,1,7) <= ?1 ORDER BY COALESCE(f.dia_vencimento, 99), f.nome`
       )

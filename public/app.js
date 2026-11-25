@@ -126,6 +126,14 @@ function criarFormLanc(destino, v = {}) {
   destino.innerHTML = '';
   destino.append($('#tpl-form-lanc').content.cloneNode(true));
   const f = destino.querySelector('.form-lanc');
+  if (v.conta_fixa) {
+    // comprovante com mensagem de conta fixa: dá baixa nela em vez de lançar gasto
+    f.dataset.contaFixa = JSON.stringify(v.conta_fixa);
+    const aviso = document.createElement('label');
+    aviso.className = 'conta-fixa-aviso';
+    aviso.innerHTML = `<input type="checkbox" name="usar_conta_fixa" checked> 🏠 Dar baixa na conta fixa <b>${esc(v.conta_fixa.nome)}</b> (não vira gasto novo)`;
+    f.prepend(aviso);
+  }
   const nome = 'tipo-' + Math.random().toString(36).slice(2);
   $$('input[name=tipo]', f).forEach((r) => (r.name = nome));
 
@@ -191,6 +199,7 @@ function lerFormLanc(f, origem = 'manual') {
     cartao: lerCartao(f, tipo),
     competencia: $('.campo-competencia', f).hidden ? null : $('[name=competencia]', f).value || null,
     origem,
+    conta_fixa: f.dataset.contaFixa && $('[name=usar_conta_fixa]', f)?.checked ? JSON.parse(f.dataset.contaFixa) : undefined,
   };
 }
 
@@ -404,7 +413,8 @@ function mostrarRascunho(r) {
       const corpo = forms.map((f) => lerFormLanc(f, r.origem));
       await api('/api/lancamentos', { metodo: 'POST', corpo });
       card.remove();
-      aviso(corpo.length > 1 ? `${corpo.length} lançamentos salvos ✔` : 'Lançado ✔');
+      const nFixas = corpo.filter((x) => x.conta_fixa).length;
+      aviso(nFixas === corpo.length ? 'Conta fixa marcada como paga ✔' : corpo.length > 1 ? `${corpo.length} lançamentos salvos ✔` : 'Lançado ✔');
       if (corpo.some((x) => x.cartao)) await recarregarConfig();
       recarregar();
     } catch (err) {
@@ -583,7 +593,9 @@ async function carregarFixas() {
       <input type="checkbox" class="check" ${f.paga ? 'checked' : ''} aria-label="Paga">
       <div class="info clicavel"><strong>${esc(f.nome)}</strong>
         <small>${f.dia_vencimento ? `Vence dia ${f.dia_vencimento}` : 'Sem vencimento'} · ${esc(f.categoria)}</small></div>
-      <span class="valor">${f.valor ? reais(f.valor) : '<small>definir</small>'}</span></li>`
+      <span class="valor">${f.valor ? reais(f.valor) : '<small>definir</small>'}${
+        f.paga && f.valor !== f.valor_cadastrado ? `<br><small>previsto ${reais(f.valor_cadastrado)}</small>` : ''
+      }</span></li>`
     )
     .join('');
 }
@@ -614,7 +626,8 @@ function editarFixa(conta) {
   $('#fixa-titulo').textContent = conta ? 'Editar conta fixa' : 'Nova conta fixa';
   form.nome.value = conta?.nome || '';
   opcoes(form.categoria, estado.config.categorias, conta?.categoria || 'Contas da casa');
-  form.valor.value = conta?.valor ? paraCampo(conta.valor) : '';
+  const base = conta ? (conta.valor_cadastrado ?? conta.valor) : 0;
+  form.valor.value = base ? paraCampo(base) : '';
   form.dia_vencimento.value = conta?.dia_vencimento || '';
   $('#fixa-excluir').hidden = !conta;
   dlg.onclose = async () => {

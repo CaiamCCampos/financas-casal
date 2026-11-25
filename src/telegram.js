@@ -2,6 +2,7 @@
 // Foto, PDF, mensagem de voz ou texto -> IA -> salva direto -> responde com botão Desfazer.
 
 import { pessoas, hoje, CAT_CARTAO } from './config.js';
+import { separarContasFixas, textoBaixa, dadosDesfazer, lerDesfazer, desfazerBaixas } from './fixas.js';
 import { extrair } from './ia.js';
 import { salvarLancamentos } from './lancamentos.js';
 import { carregarMes, resumir, temDatas, periodoFatura, dataVencimento } from './calculo.js';
@@ -272,9 +273,11 @@ async function lancar(env, msg, u, origem) {
   const ouvi = r.transcricao ? `🎤 <i>“${html(r.transcricao)}”</i>\n\n` : '';
   if (r.erro) return responder(env, chat, `${ouvi}⚠️ ${html(r.erro)}`);
 
+  // comprovante com mensagem de conta fixa ("condomínio"): baixa na conta em vez de gasto novo
+  const sep = await separarContasFixas(env, (r.itens || []).filter((i) => i.valor > 0));
   const validos = [];
-  const avisos = [];
-  for (const i of r.itens || []) {
+  const avisos = [...sep.avisos];
+  for (const i of sep.lancar) {
     if (!(i.valor > 0)) continue;
     if (i.categoria === CAT_CARTAO && !i.cartao) {
       avisos.push(`Fatura de ${reais(i.valor * 100)}: de qual cartão? Mande de novo dizendo o nome.`);
@@ -282,14 +285,14 @@ async function lancar(env, msg, u, origem) {
     }
     validos.push({ ...i, quem: i.quem || u.pessoa, origem: r.origem || 'texto' });
   }
-  if (!validos.length) {
+  if (!validos.length && !sep.baixas.length) {
     const motivo = avisos[0] || r.observacao || 'Não encontrei nenhum valor. Tente dizer quanto foi e com o quê.';
     return responder(env, chat, `${ouvi}🤔 ${html(motivo)}`);
   }
 
-  let ids;
+  let ids = [];
   try {
-    ids = await salvarLancamentos(env, validos);
+    if (validos.length) ids = await salvarLancamentos(env, validos);
   } catch (e) {
     return responder(env, chat, `${ouvi}⚠️ ${html(e.message || 'Não consegui salvar.')}`);
   }
@@ -335,7 +338,8 @@ async function lancar(env, msg, u, origem) {
     const sinal = l.tipo === 'receita' ? '+' : '';
     return `${EMOJI[l.categoria] || '🧾'} <b>${html(titulo)}</b> — ${sinal}${valor}\n<i>${html(det)}</i>`;
   });
-  const cab = validos.length > 1 ? `✅ ${validos.length} lançamentos salvos` : '✅ Lançado';
+  linhas.unshift(...sep.baixas.map((b) => html(textoBaixa(b))));
+  const cab = !validos.length ? '✅ Conta fixa marcada como paga' : validos.length > 1 ? `✅ ${validos.length} lançamentos salvos` : '✅ Lançado';
   const extra = [r.observacao ? `ℹ️ ${html(r.observacao)}` : '', ...avisos.map((a) => `⚠️ ${html(a)}`)]
     .filter(Boolean)
     .join('\n');
@@ -345,7 +349,7 @@ async function lancar(env, msg, u, origem) {
     reply_markup: {
       inline_keyboard: [
         [
-          { text: '↩️ Desfazer', callback_data: `desf:${ids.join(',')}` },
+          { text: '↩️ Desfazer', callback_data: dadosDesfazer(ids, sep.baixas) },
           { text: '✏️ Corrigir no app', url: origem },
         ],
       ],
@@ -381,6 +385,19 @@ async function botao(env, q) {
 
   if (!u.pessoa) return fim('Escolha quem você é primeiro.');
 
+  if (q.data?.startsWith('dx:')) {
+    const { ids, baixas } = lerDesfazer(q.data);
+    if (ids.length) await apagar(env, ids, q.from.id);
+    await desfazerBaixas(env.DB, baixas);
+    await fim('Desfeito');
+    await tg(env, 'editMessageText', {
+      chat_id: chat,
+      message_id: q.message.message_id,
+      text: `↩️ Desfeito.${ids.length ? ' Lançamento apagado.' : ''}${baixas.length ? ' Conta fixa voltou para "a pagar".' : ''}`,
+    });
+    return;
+  }
+
   if (q.data?.startsWith('desf:')) {
     const ids = q.data.slice(5).split(',');
     await apagar(env, ids, q.from.id);
@@ -398,18 +415,20 @@ async function botao(env, q) {
 // ---------- aviso vindo de fora (atalho do iPhone) ----------
 
 /** Manda uma mensagem para o Telegram da pessoa, com botão Desfazer. Ignora se ela não entrou no robô. */
-export async function avisarNoTelegram(env, pessoa, texto, ids) {
+export async function avisarNoTelegram(env, pessoa, texto, ids, baixas = []) {
   if (!env.TELEGRAM_TOKEN) return;
   const u = await env.DB.prepare('SELECT * FROM telegram_usuarios WHERE pessoa=?1 ORDER BY criado_em DESC LIMIT 1')
     .bind(pessoa)
     .first();
   if (!u) return;
-  await env.DB.prepare('UPDATE telegram_usuarios SET ultimos=?1 WHERE telegram_id=?2').bind(JSON.stringify(ids), u.telegram_id).run();
+  if (ids.length) {
+    await env.DB.prepare('UPDATE telegram_usuarios SET ultimos=?1 WHERE telegram_id=?2').bind(JSON.stringify(ids), u.telegram_id).run();
+  }
   await tg(env, 'sendMessage', {
     chat_id: u.chat_id,
     text: texto,
     disable_web_page_preview: true,
-    reply_markup: { inline_keyboard: [[{ text: '↩️ Desfazer', callback_data: `desf:${ids.join(',')}` }]] },
+    reply_markup: { inline_keyboard: [[{ text: '↩️ Desfazer', callback_data: dadosDesfazer(ids, baixas) }]] },
   });
 }
 

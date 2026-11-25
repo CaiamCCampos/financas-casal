@@ -31,7 +31,7 @@ function instrucoes(env, quemEnviou) {
 Hoje é ${hoje()} (fuso de São Paulo). Quem está enviando: ${quemEnviou || 'não informado'}.
 
 Extraia os lançamentos da mensagem, foto, comprovante (Pix, TED, boleto, cartão) ou transcrição de áudio e responda SOMENTE com JSON, sem texto em volta, neste formato:
-{"itens":[{"tipo":"gasto","data":"AAAA-MM-DD","descricao":"...","categoria":"...","valor":12.34,"pagamento":"...","quem":"...","cartao":""}],"observacao":"..."}
+{"itens":[{"tipo":"gasto","data":"AAAA-MM-DD","descricao":"...","categoria":"...","valor":12.34,"pagamento":"...","quem":"...","cartao":"","contraparte":"","mensagem":""}],"observacao":"..."}
 
 Regras:
 - tipo: "gasto" ou "receita" (salário, adiantamento, pagamento recebido, Pix recebido).
@@ -46,6 +46,8 @@ Regras:
 - FATURA DE CARTÃO ("a fatura do Inter veio 1.250", "fatura do Nubank deu 800"): tipo "gasto", categoria "Cartão de crédito", cartao = nome do cartão, pagamento "", descricao "Fatura <cartão>". A data é a que a pessoa disser ou hoje.
 - Compra feita no cartão de crédito com o cartão dito ("paguei 50 no Itaú", "no cartão da Renner"): pagamento "Crédito", cartao = nome do cartão e a categoria normal da compra (NUNCA "Cartão de crédito").
 - cartao: use o nome exato de um destes quando for um deles: ${cartoes}. Se for outro cartão, escreva o nome que a pessoa disse (ex.: "C6"). Se não houver cartão, "".
+- contraparte: em Pix, TED ou transferência, o nome da outra pessoa ou empresa como aparece (quem recebeu, se o casal pagou; quem enviou, se o casal recebeu). Senão "".
+- mensagem: o texto que a pessoa escreveu no Pix/transferência (campo "Mensagem", "Descrição", "Informações ao recebedor" ou parecido), copiado como está. Não invente: se não houver, "".
 - quem: uma destas pessoas: ${pessoas(env).join(', ')}. Se não for dito, use quem está enviando.
 - Uma compra = um item. Só crie vários itens se forem compras ou pagamentos diferentes.
 - Se não houver nenhum valor, devolva "itens": [] e explique em "observacao" o que faltou.
@@ -194,6 +196,8 @@ function limpar(env, resultado) {
         pagamento: tipo === 'gasto' && PAGAMENTOS.includes(i.pagamento) ? i.pagamento : '',
         quem: ps.includes(i.quem) ? i.quem : '',
         cartao: tipo === 'gasto' ? nomeDoCartao(env, i.cartao) : '',
+        contraparte: String(i.contraparte || '').slice(0, 80),
+        mensagem: String(i.mensagem || '').slice(0, 140),
       };
     });
   return { itens, observacao: String(resultado?.observacao || '').slice(0, 300) };

@@ -7,6 +7,7 @@ import { extrair } from './ia.js';
 import { paraCentavos, salvarLancamentos, textoCurto } from './lancamentos.js';
 import { carregarCategorias } from './calculo.js';
 import { avisarNoTelegram } from './telegram.js';
+import { separarContasFixas, textoBaixa } from './fixas.js';
 
 const moeda = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 const dataBR = (iso) => iso.split('-').reverse().slice(0, 2).join('/');
@@ -51,9 +52,13 @@ export async function receberDoAtalho(env, form) {
   const r = await extrair(env, entrada);
   if (r.erro) return `⚠️ ${r.erro}`;
 
+  // comprovante com mensagem de conta fixa ("condomínio"): dá baixa nela em vez de lançar gasto
+  const sep = await separarContasFixas(env, (r.itens || []).filter((i) => i.valor > 0));
+  const linhasBaixa = sep.baixas.map(textoBaixa);
+
   const validos = [];
-  const avisos = [];
-  for (const i of r.itens || []) {
+  const avisos = [...sep.avisos];
+  for (const i of sep.lancar) {
     if (!(i.valor > 0)) continue;
     if (i.categoria === CAT_CARTAO && !i.cartao) {
       avisos.push('Fatura sem o nome do cartão: lance pelo app.');
@@ -66,7 +71,16 @@ export async function receberDoAtalho(env, form) {
     }
     validos.push(item);
   }
-  if (!validos.length) return `🤔 ${avisos[0] || r.observacao || 'Não encontrei nenhum valor nesse comprovante.'}`;
+  if (!validos.length) {
+    if (!sep.baixas.length) return `🤔 ${avisos[0] || r.observacao || 'Não encontrei nenhum valor nesse comprovante.'}`;
+    const msgB = [...linhasBaixa, ...avisos.map((x) => `ℹ️ ${x}`)].join('\n');
+    try {
+      await avisarNoTelegram(env, quem, `📲 Pelo atalho do iPhone:\n\n${msgB}`, [], sep.baixas);
+    } catch (e) {
+      console.error('aviso telegram', e);
+    }
+    return msgB;
+  }
 
   let ids;
   try {
@@ -80,11 +94,11 @@ export async function receberDoAtalho(env, form) {
     const det = [l.categoria, l.cartao || l.pagamento, dataBR(l.data)].filter(Boolean).join(' · ');
     return `${l.descricao || l.categoria}: ${sinal}${moeda.format(l.valor)} (${det})`;
   });
-  const msg = `✅ ${linhas.join('\n✅ ')}${avisos.length ? `\nℹ️ ${avisos.join(' ')}` : ''}`;
+  const msg = [...linhasBaixa, `✅ ${linhas.join('\n✅ ')}`].join('\n') + (avisos.length ? `\nℹ️ ${avisos.join(' ')}` : '');
 
   // aviso no Telegram de quem enviou, com botão Desfazer (se a pessoa já entrou no robô)
   try {
-    await avisarNoTelegram(env, quem, `📲 Pelo atalho do iPhone:\n\n${msg}`, ids);
+    await avisarNoTelegram(env, quem, `📲 Pelo atalho do iPhone:\n\n${msg}`, ids, sep.baixas);
   } catch (e) {
     console.error('aviso telegram', e);
   }

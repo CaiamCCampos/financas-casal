@@ -4,6 +4,7 @@ import { ErroHttp, erro, pinConfere } from './erros.js';
 import { paraCentavos, textoCurto, prepararLancamento, salvarLancamentos } from './lancamentos.js';
 import { webhook as telegramWebhook, conectar as telegramConectar, status as telegramStatus } from './telegram.js';
 import { receberDoAtalho } from './atalho.js';
+import { marcarContasFixas, separarContasFixas } from './fixas.js';
 import { planilhaDoMes, planilhaCompleta, relatorioPessoa } from './planilha.js';
 import {
   intervalo,
@@ -125,8 +126,11 @@ async function api(req, env, url) {
 
   if (pathname === '/api/lancamentos' && metodo === 'POST') {
     const corpo = await req.json().catch(() => erro(400, 'JSON inválido'));
-    const ids = await salvarLancamentos(env, Array.isArray(corpo) ? corpo : [corpo]);
-    return json(ids.map((id) => ({ id })), 201);
+    const lista = Array.isArray(corpo) ? corpo : [corpo];
+    // rascunho vindo de comprovante com conta fixa marcada: dá baixa em vez de lançar
+    const { lancar, baixas } = await separarContasFixas(env, lista.filter((l) => l.conta_fixa));
+    const ids = await salvarLancamentos(env, [...lista.filter((l) => !l.conta_fixa), ...lancar]);
+    return json({ ids, baixas }, 201);
   }
 
   let m = pathname.match(/^\/api\/lancamentos\/(\d+)$/);
@@ -153,7 +157,8 @@ async function api(req, env, url) {
     const mes = mesValido(searchParams.get('mes'));
     const { results } = await db
       .prepare(
-        `SELECT f.*, CASE WHEN p.conta_id IS NULL THEN 0 ELSE 1 END AS paga
+        `SELECT f.*, CASE WHEN p.conta_id IS NULL THEN 0 ELSE 1 END AS paga,
+                f.valor AS valor_cadastrado, COALESCE(p.valor, f.valor) AS valor
          FROM contas_fixas f LEFT JOIN fixas_pagas p ON p.conta_id=f.id AND p.mes=?1
          WHERE f.ativa=1 AND substr(f.criado_em,1,7) <= ?1 ORDER BY COALESCE(f.dia_vencimento, 99), f.nome`
       )
@@ -326,7 +331,7 @@ async function api(req, env, url) {
     const form = await req.formData().catch(() => erro(400, 'Envie como formulário'));
     const r = await extrair(env, form);
     if (r.erro) return json({ erro: r.erro }, r.status || 500);
-    return json(r);
+    return json({ ...r, itens: await marcarContasFixas(env, r.itens) });
   }
 
   // ----- exportar planilha Excel (layout fixo) -----
