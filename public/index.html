@@ -81,24 +81,63 @@
 
       <!-- RESUMO -->
       <section class="aba" id="aba-resumo" hidden>
-        <div class="kpis">
-          <div class="kpi"><span>Receitas</span><strong id="k-receitas"></strong></div>
-          <div class="kpi"><span>Despesas</span><strong id="k-despesas"></strong></div>
-          <div class="kpi destaque"><span>Saldo do mês</span><strong id="k-saldo"></strong></div>
+        <div class="g-hero">
+          <span class="g-hero-rot">Saldo do mês</span>
+          <strong id="k-saldo" class="g-hero-val">R$ 0,00</strong>
+          <div class="g-hero-linhas">
+            <div><span>Entrou</span><b id="k-receitas">R$ 0,00</b><small id="k-receitas-delta" class="delta"></small></div>
+            <div><span>Saiu</span><b id="k-despesas">R$ 0,00</b><small id="k-despesas-delta" class="delta"></small></div>
+          </div>
         </div>
-        <div class="cartao">
-          <div class="linha-sep"><span>Gastos variáveis</span><strong id="k-variaveis"></strong></div>
-          <div class="linha-sep" id="k-nd-linha"><span>Cartão não detalhado</span><strong id="k-nd"></strong></div>
-          <div class="linha-sep"><span>Contas fixas</span><strong id="k-fixas"></strong></div>
+
+        <div class="g-card">
+          <div class="g-cab"><h2>Gastos de cada dia</h2><small id="g-dias-sub"></small></div>
+          <div class="g-area" id="g-dias"></div>
+          <p class="g-nota">Compras do dia a dia. Contas fixas e faturas não têm dia de compra, por isso ficam fora.</p>
+        </div>
+
+        <div class="g-card">
+          <div class="g-cab"><h2>Por categoria</h2><small>toque numa fatia</small></div>
+          <div class="g-rosca-box">
+            <div class="g-area" id="g-rosca"></div>
+          </div>
+          <ul class="g-legenda-lista" id="g-rosca-leg"></ul>
+        </div>
+
+        <div class="g-card">
+          <div class="g-cab"><h2>Ritmo do mês</h2><small id="g-ritmo-sub"></small></div>
+          <div class="g-area" id="g-ritmo"></div>
+          <div class="g-legenda" id="g-ritmo-leg"></div>
+        </div>
+
+        <div class="g-card">
+          <div class="g-cab"><h2>Últimos 6 meses</h2></div>
+          <div class="g-area" id="g-meses"></div>
+          <div class="g-legenda" id="g-meses-leg"></div>
+        </div>
+
+        <div class="g-card">
+          <div class="g-cab"><h2>Cartões</h2><small>fatura atual e próxima</small></div>
+          <ul class="barras g-limpo" id="g-cartoes"></ul>
+        </div>
+
+        <div class="g-card">
+          <div class="g-cab"><h2>Onde mais gastou</h2><small>top 5 estabelecimentos</small></div>
+          <ul class="barras g-limpo" id="g-lojas"></ul>
+        </div>
+
+        <div class="g-card">
+          <div class="g-cab"><h2 id="g-pessoas-tit">Quem gastou</h2><small>toque para detalhar</small></div>
+          <ul class="lista g-limpo" id="g-pessoas"></ul>
+        </div>
+
+        <div class="g-card">
+          <div class="g-cab"><h2>Contas fixas</h2><strong id="k-fixas"></strong></div>
           <div class="progresso"><div id="k-fixas-barra"></div></div>
           <small id="k-fixas-txt"></small>
           <p class="dica nota" id="k-nao-somados" hidden></p>
         </div>
-        <h2 class="secao">Por categoria</h2>
-        <ul class="barras" id="por-categoria"></ul>
-        <h2 class="secao">Por pessoa</h2>
-        <p class="dica">Toque em uma pessoa para ver onde foi o dinheiro.</p>
-        <ul class="lista" id="por-pessoa"></ul>
+
         <h2 class="secao">Planilhas</h2>
         <div class="exportar">
           <button class="btn" type="button" data-exportar="mes">📊 Planilha do mês</button>

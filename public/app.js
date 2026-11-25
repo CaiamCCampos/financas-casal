@@ -1,3 +1,4 @@
+import * as G from './graficos.js';
 // Finanças do Casal — app web (sem framework)
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -517,52 +518,95 @@ function editarLanc(l) {
 let resumoAtual = null;
 
 async function carregarResumo() {
-  const r = await api(`/api/resumo?mes=${estado.mes}`);
+  const [r, g] = await Promise.all([api(`/api/resumo?mes=${estado.mes}`), api(`/api/painel?mes=${estado.mes}`)]);
   resumoAtual = r;
-  $('#k-receitas').textContent = reais(r.receitas);
-  $('#k-despesas').textContent = reais(r.despesas);
-  const saldo = $('#k-saldo');
-  saldo.textContent = reais(r.saldo);
-  saldo.classList.toggle('negativo', r.saldo < 0);
-  $('#k-variaveis').textContent = reais(r.gastos_variaveis);
-  $('#k-nd').textContent = reais(r.nao_detalhado);
-  $('#k-nd-linha').hidden = !r.nao_detalhado;
-  $('#k-fixas').textContent = reais(r.contas_fixas);
-  const pct = r.contas_fixas ? Math.round((r.contas_fixas_pagas / r.contas_fixas) * 100) : 0;
-  $('#k-fixas-barra').style.width = pct + '%';
-  $('#k-fixas-txt').textContent = r.contas_fixas
-    ? `Contas fixas: ${reais(r.contas_fixas_pagas)} pagos de ${reais(r.contas_fixas)} (${pct}%)`
-    : 'Cadastre os valores das contas fixas na aba Contas.';
-  const ns = $('#k-nao-somados');
-  ns.hidden = !r.nao_detalhado;
-  ns.textContent = 'Cartão não detalhado: parte das faturas que não foi lançada compra a compra.';
   renderVariaveis(r);
   renderCartoes(r);
+  desenharPainel(r, g);
+}
 
-  const maior = Math.max(1, ...r.por_categoria.map((c) => c.total));
-  $('#por-categoria').innerHTML = r.por_categoria
-    .map(
-      (c) => `<li><div class="topo-barra"><span>${esc(c.categoria)}</span><b>${reais(c.total)}</b></div>
-      <div class="trilho"><div style="width:${(c.total / maior) * 100}%"></div></div></li>`
-    )
-    .join('');
+function delta(no, atual, anterior, { menorEhMelhor }) {
+  if (!anterior) {
+    no.textContent = '';
+    return;
+  }
+  const pct = Math.round(((atual - anterior) / anterior) * 100);
+  const bom = menorEhMelhor ? pct <= 0 : pct >= 0;
+  no.className = `delta ${pct === 0 ? '' : bom ? 'bom' : 'ruim'}`;
+  no.textContent = pct === 0 ? '= mês anterior' : `${pct > 0 ? '▲' : '▼'} ${Math.abs(pct)}% vs ${nomeMes(somarMes(estado.mes, -1)).split(' ')[0].toLowerCase()}`;
+}
 
-  $('#por-pessoa').innerHTML = r.por_pessoa
-    .map(
-      (p, i) => `<li class="clicavel" data-pessoa="${i}"><div class="info"><strong>${esc(p.quem || 'Sem nome')}</strong>
-      <small>Recebeu ${reais(p.recebeu)}</small></div><span class="valor gasto">− ${reais(p.gastou)}</span></li>`
-    )
-    .join('');
+function desenharPainel(r, g) {
+  const t = g.totais;
+  const saldo = $('#k-saldo');
+  G.contar(saldo, t.saldo);
+  saldo.classList.toggle('negativo', t.saldo < 0);
+  G.contar($('#k-receitas'), t.receitas);
+  G.contar($('#k-despesas'), t.despesas);
+  delta($('#k-receitas-delta'), t.receitas, g.anterior.receitas, { menorEhMelhor: false });
+  delta($('#k-despesas-delta'), t.despesas, g.anterior.despesas, { menorEhMelhor: true });
+
+  // gastos de cada dia
+  const gastoDias = g.dias.slice(0, g.ultimo_dia || g.dias.length).reduce((a, b) => a + b, 0);
+  $('#g-dias-sub').textContent = gastoDias ? `${reais(gastoDias)} no dia a dia` : '';
+  G.colunasDias($('#g-dias'), g.dias, { ultimoDia: g.ultimo_dia, mes: g.mes });
+
+  // categorias
+  if (g.categorias.length) G.rosca($('#g-rosca'), $('#g-rosca-leg'), g.categorias, [...estado.config.categorias, 'Cartão (não detalhado)']);
+  else {
+    $('#g-rosca').innerHTML = '<p class="g-vazio">Sem gastos neste mês.</p>';
+    $('#g-rosca-leg').innerHTML = '';
+  }
+
+  // ritmo (acumulado)
+  const ant = g.anterior.variaveis_ate_dia;
+  const atual = g.ultimo_dia ? g.acumulado.atual[g.ultimo_dia - 1] : g.acumulado.atual[g.acumulado.atual.length - 1];
+  const sub = $('#g-ritmo-sub');
+  if (g.ultimo_dia && ant) {
+    const dif = atual - ant;
+    sub.className = dif > 0 ? 'ruim' : 'bom';
+    sub.textContent = `${reais(Math.abs(dif))} ${dif > 0 ? 'a mais' : 'a menos'} que no mesmo dia do mês passado`;
+  } else {
+    sub.className = '';
+    sub.textContent = '';
+  }
+  G.linhaAcumulada($('#g-ritmo'), $('#g-ritmo-leg'), {
+    atual: g.acumulado.atual,
+    anterior: g.acumulado.anterior,
+    ultimoDia: g.ultimo_dia,
+    mes: g.mes,
+    mesAnt: g.anterior.mes,
+  });
+
+  G.colunasMeses($('#g-meses'), $('#g-meses-leg'), g.historico);
+  G.faturas($('#g-cartoes'), g.cartoes);
+  G.barrasH($('#g-lojas'), g.estabelecimentos, {
+    rotulo: (x) => x.estabelecimento,
+    sub: (x) => `${x.qtd}× · ${x.categoria}`,
+    cls: 's2',
+    vazio: 'Ainda sem estabelecimentos este mês.',
+  });
+  $('#g-pessoas-tit').textContent = g.pessoas.map((p) => p.quem).join(' × ') || 'Quem gastou';
+  G.pessoas($('#g-pessoas'), g.pessoas, (p) => {
+    const cheio = r.por_pessoa.find((x) => x.quem === p.quem);
+    if (cheio) abrirPessoa(cheio);
+  });
+
+  // contas fixas
+  $('#k-fixas').textContent = reais(t.fixas);
+  const pct = t.fixas ? Math.round((t.fixas_pagas / t.fixas) * 100) : 0;
+  $('#k-fixas-barra').style.width = pct + '%';
+  $('#k-fixas-txt').textContent = t.fixas
+    ? `${reais(t.fixas_pagas)} pagos de ${reais(t.fixas)} (${pct}%)`
+    : 'Cadastre os valores das contas fixas na aba Contas.';
+  const ns = $('#k-nao-somados');
+  ns.hidden = !t.nao_detalhado;
+  ns.textContent = `Inclui ${reais(t.nao_detalhado)} de cartão não detalhado: parte das faturas que não foi lançada compra a compra.`;
 
   $('#exportar-pessoas').innerHTML = estado.config.pessoas
     .map((p) => `<button class="btn" type="button" data-relatorio="${esc(p)}">👤 Relatório ${esc(p)}</button>`)
     .join('');
 }
-
-$('#por-pessoa').addEventListener('click', (e) => {
-  const li = e.target.closest('[data-pessoa]');
-  if (li) abrirPessoa(resumoAtual.por_pessoa[Number(li.dataset.pessoa)]);
-});
 
 function abrirPessoa(p) {
   const dlg = $('#dlg-pessoa');

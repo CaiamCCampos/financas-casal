@@ -12,6 +12,9 @@ import {
   carregarMes,
   resumir,
   carregarCategorias,
+  mesAnterior,
+  ehFatura,
+  estabelecimentoDe,
 } from './calculo.js';
 
 // ---------- utilitários ----------
@@ -67,6 +70,80 @@ function normalizarFixa(b, cats) {
 
 // ---------- rotas ----------
 
+/**
+ * Painel do Resumo: tudo que os gráficos precisam numa chamada.
+ * Os totais seguem as mesmas regras do resumo (sem dupla contagem).
+ */
+async function painel(env, mes) {
+  const hojeIso = hoje();
+  const meses = [];
+  for (let m = mes, i = 0; i < 6; i++, m = mesAnterior(m)) meses.unshift(m);
+  const resumos = [];
+  for (const m of meses) {
+    const { L, F, C, cats } = await carregarMes(env, m);
+    resumos.push({ m, L, r: resumir(env, L, F, C, cats) });
+  }
+  const atual = resumos[resumos.length - 1];
+  const ant = resumos[resumos.length - 2];
+
+  // gastos do dia a dia por dia (compras; fatura e contas fixas não têm dia de compra)
+  const porDia = (L, m) => {
+    const dias = new Array(Number(new Date(Date.UTC(+m.slice(0, 4), +m.slice(5, 7), 0)).getUTCDate())).fill(0);
+    for (const l of L) if (l.tipo === 'gasto' && !ehFatura(l) && l.data.startsWith(m)) dias[Number(l.data.slice(8, 10)) - 1] += l.valor;
+    return dias;
+  };
+  const diasAtual = porDia(atual.L, mes);
+  const diasAnt = porDia(ant.L, ant.m);
+  const acumular = (d) => d.reduce((a, v) => (a.push((a.length ? a[a.length - 1] : 0) + v), a), []);
+  const ultimoDia = hojeIso.startsWith(mes) ? Number(hojeIso.slice(8, 10)) : mes < hojeIso.slice(0, 7) ? diasAtual.length : 0;
+
+  // top estabelecimentos do mês
+  const lojas = {};
+  for (const l of atual.L) {
+    if (l.tipo !== 'gasto' || ehFatura(l)) continue;
+    const e = estabelecimentoDe(l);
+    if (e === 'Outros') continue;
+    const k = e.toLowerCase();
+    lojas[k] = lojas[k] || { estabelecimento: e, total: 0, qtd: 0, categoria: l.categoria };
+    lojas[k].total += l.valor;
+    lojas[k].qtd += 1;
+  }
+
+  const r = atual.r;
+  const rA = ant.r;
+  return {
+    mes,
+    hoje: hojeIso,
+    ultimo_dia: ultimoDia,
+    totais: { receitas: r.receitas, despesas: r.despesas, saldo: r.saldo, variaveis: r.gastos_variaveis, fixas: r.contas_fixas, fixas_pagas: r.contas_fixas_pagas, nao_detalhado: r.nao_detalhado },
+    anterior: {
+      mes: ant.m,
+      receitas: rA.receitas,
+      despesas: rA.despesas,
+      saldo: rA.saldo,
+      // variáveis do mês anterior até o mesmo dia (comparação justa no meio do mês)
+      variaveis_ate_dia: ultimoDia ? acumular(diasAnt)[Math.min(ultimoDia, diasAnt.length) - 1] || 0 : 0,
+    },
+    categorias: r.por_categoria.filter((c) => c.total > 0).sort((a, b) => b.total - a.total),
+    dias: diasAtual,
+    acumulado: { atual: acumular(diasAtual), anterior: acumular(diasAnt) },
+    historico: resumos.map((x) => ({ mes: x.m, receitas: x.r.receitas, despesas: x.r.despesas })),
+    estabelecimentos: Object.values(lojas).sort((a, b) => b.total - a.total).slice(0, 5),
+    cartoes: r.cartoes
+      .filter((c) => c.fatura_atual || c.fatura_proxima || c.compras)
+      .map((c) => ({
+        nome: c.nome,
+        compras: c.compras,
+        atual: c.fatura_atual ? { total: c.fatura_atual.total, vence: c.fatura_atual.vence } : null,
+        proxima: c.fatura_proxima ? { total: c.fatura_proxima.total, vence: c.fatura_proxima.vence } : null,
+        fatura: c.fatura,
+      })),
+    pessoas: r.por_pessoa
+      .filter((p) => p.quem)
+      .map((p) => ({ quem: p.quem, gastou: p.gastou, recebeu: p.recebeu, categorias: p.categorias.slice(0, 6) })),
+  };
+}
+
 async function resumo(env, mes) {
   const { L, F, C, cats } = await carregarMes(env, mes);
   const r = resumir(env, L, F, C, cats);
@@ -110,6 +187,9 @@ async function api(req, env, url) {
     });
   }
 
+  if (pathname === '/api/painel' && metodo === 'GET') {
+    return json(await painel(env, mesValido(searchParams.get('mes'))));
+  }
   if (pathname === '/api/resumo' && metodo === 'GET') {
     return json(await resumo(env, mesValido(searchParams.get('mes'))));
   }

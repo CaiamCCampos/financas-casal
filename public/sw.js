@@ -1,7 +1,7 @@
 // Service worker: deixa o app instalável e abre mesmo com internet ruim.
 // Arquivos do app: rede primeiro, cache como reserva. A API nunca é guardada.
-const CACHE = 'financas-v10';
-const ARQUIVOS = ['/', '/index.html', '/style.css', '/app.js', '/manifest.webmanifest', '/icons/icon.svg'];
+const CACHE = 'financas-v11';
+const ARQUIVOS = ['/', '/index.html', '/style.css', '/app.js', '/graficos.js', '/manifest.webmanifest', '/icons/icon.svg'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ARQUIVOS)));
