@@ -40,7 +40,7 @@ export function normalizarLancamento(b, env, cats) {
   const categoria = lista.includes(b.categoria) ? b.categoria : 'Outros';
   const quem = pessoas(env).includes(b.quem) ? b.quem : '';
   const pagamento = tipo === 'gasto' && PAGAMENTOS.includes(b.pagamento) ? b.pagamento : '';
-  const origem = ['manual', 'foto', 'audio', 'texto'].includes(b.origem) ? b.origem : 'manual';
+  const origem = ['manual', 'foto', 'audio', 'texto', 'applepay'].includes(b.origem) ? b.origem : 'manual';
   const cartao = tipo === 'gasto' ? textoCurto(b.cartao, 40) : '';
   const cartaoId = tipo === 'gasto' && Number(b.cartao_id) > 0 ? Number(b.cartao_id) : null;
   if (categoria === CAT_CARTAO && !cartao && !cartaoId) erro(400, 'Diga de qual cartão é a fatura');
