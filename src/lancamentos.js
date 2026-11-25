@@ -115,9 +115,9 @@ export async function salvarLancamentos(env, lista) {
       stmt.bind(l.tipo, l.data, l.descricao, l.categoria, l.valor, l.quem, l.pagamento, l.origem, l.cartaoId, l.pago, l.competencia)
     )
   );
-  // o mesmo gasto chegou antes pela notificação do banco: fica só o lançamento melhor (comprovante/Apple Pay/app)
+  // o mesmo gasto/entrada chegou antes pela notificação do banco: fica só o lançamento melhor (comprovante/Apple Pay/app)
   for (const l of itens) {
-    if (l.tipo === 'gasto' && l.origem !== 'notificacao') await substituirNotificacao(env, l.valor, l.data);
+    if (l.origem !== 'notificacao') await substituirNotificacao(env, l.valor, l.data, l.tipo);
   }
   return res.map((r) => r.results[0].id);
 }

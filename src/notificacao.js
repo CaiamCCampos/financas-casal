@@ -1,5 +1,6 @@
 // Notificação dos apps de banco (automação do iPhone "Quando eu receber uma notificação do app...").
-// Por enquanto registra SÓ SAÍDAS (compra, Pix enviado, pagamento). Entradas são lançadas à mão.
+// Registra saídas (compra, Pix enviado, pagamento) e entradas (Pix/transferência recebida, salário).
+// Nunca conta dinheiro que só muda de conta entre o casal (Caiam ⇄ Milena, ou para si mesmo).
 // Fica em silêncio (resposta vazia) quando a notificação não vira lançamento, para o atalho não avisar à toa.
 
 import { CAT_CARTAO, pessoas } from './config.js';
@@ -13,7 +14,8 @@ const dataBR = (iso) => iso.split('-').reverse().slice(0, 2).join('/');
 const TEM_VALOR = /\d+,\d{2}|R\$\s*\d/;
 // não são gasto do dia a dia: dinheiro entrando, fatura (já é conferência), compra que não passou,
 // agendamento (ainda não saiu), investimento/guardar dinheiro
-const ENTRADA = /\b(voc[eê] recebeu|recebid[oa]|recebeu (um )?pix|caiu na (sua )?conta|dep[oó]sito recebido|estorno|reembolso|cashback|rendimento|sal[aá]rio)\b/i;
+// não é entrada nem saída de verdade: devolução de compra e rendimento de investimento
+const NAO_CONTA = /\b(estorno|estornad[oa]|reembolso|rendimento|rendeu)\b/i;
 // "fatura" só quando o assunto é a fatura (fechou, venceu, pagamento da fatura);
 // compra que cita "limite disponível" ou "lançada na fatura" continua valendo
 const IGNORAR = new RegExp(
@@ -46,17 +48,17 @@ function entreOCasal(env, item) {
  *  - conta fixa baixada pelo comprovante com esse valor nas últimas 12 h;
  *  - outra notificação igual nos últimos 10 min (o banco às vezes manda duas).
  */
-async function jaEntrou(env, valor, data) {
+async function jaEntrou(env, tipo, valor, data) {
   const r = await env.DB.prepare(
     `SELECT 1 FROM lancamentos
-      WHERE tipo='gasto' AND valor=?1 AND data=?2
+      WHERE tipo=?3 AND valor=?1 AND data=?2
         AND ((origem <> 'notificacao' AND criado_em >= datetime('now', '-12 hours'))
           OR (origem = 'notificacao' AND criado_em >= datetime('now', '-10 minutes')))
      UNION ALL
-     SELECT 1 FROM fixas_pagas WHERE valor=?1 AND pago_em >= datetime('now', '-12 hours')
+     SELECT 1 FROM fixas_pagas WHERE ?3 = 'gasto' AND valor=?1 AND pago_em >= datetime('now', '-12 hours')
      LIMIT 1`
   )
-    .bind(valor, data)
+    .bind(valor, data, tipo)
     .first();
   return Boolean(r);
 }
@@ -83,14 +85,15 @@ export async function receberNotificacao(env, form, quem) {
     .slice(0, 1000);
 
   // filtros baratos antes da IA (economiza a cota grátis)
-  if (!bruto || !TEM_VALOR.test(bruto) || ENTRADA.test(bruto) || IGNORAR.test(bruto)) return '';
+  if (!bruto || !TEM_VALOR.test(bruto) || NAO_CONTA.test(bruto) || IGNORAR.test(bruto)) return '';
 
   const entrada = new FormData();
   entrada.append('quem', quem);
   entrada.append('tipo', 'texto');
   entrada.append(
     'texto',
-    `Notificação do app ${app || 'do banco'}. Registre SÓ se for saída de dinheiro; se for dinheiro entrando, devolva itens vazios.\n` +
+    `Notificação do app ${app || 'do banco'}. Registre a movimentação de dinheiro (saída ou entrada).\n` +
+      `- Pix/transferência RECEBIDA, salário, depósito: tipo "receita", contraparte = quem enviou, descricao = "Pix de <nome>" (ou "Salário").\n` +
       `- Compra no cartão de CRÉDITO (ou só "compra aprovada" num app de cartão): pagamento "Crédito" e cartao "${app || 'o do app'}".\n` +
       `- Compra no DÉBITO: pagamento "Débito" e cartao "".\n` +
       `- Pix enviado/transferência: pagamento "Pix", cartao "", contraparte = quem recebeu.\n` +
@@ -106,11 +109,11 @@ export async function receberNotificacao(env, form, quem) {
   const salvar = [];
   const avisos = [];
   for (const i of r.itens || []) {
-    if (i.tipo !== 'gasto' || !(i.valor > 0) || i.categoria === CAT_CARTAO) continue;
+    if (!(i.valor > 0) || i.categoria === CAT_CARTAO) continue;
     if (entreOCasal(env, i)) continue;
     const valor = Math.round(i.valor * 100);
-    if (await jaEntrou(env, valor, i.data)) continue;
-    const cat = await categoriaAnterior(env, i.descricao);
+    if (await jaEntrou(env, i.tipo, valor, i.data)) continue;
+    const cat = i.tipo === 'gasto' ? await categoriaAnterior(env, i.descricao) : null;
     salvar.push({ ...i, categoria: cat || i.categoria, quem: i.quem || quem, origem: 'notificacao' });
   }
   if (!salvar.length) return '';
@@ -124,7 +127,7 @@ export async function receberNotificacao(env, form, quem) {
   }
   const linhas = salvar.map((l) => {
     const det = [l.categoria, l.cartao || l.pagamento, dataBR(l.data)].filter(Boolean).join(' · ');
-    return `✅ ${l.descricao || l.categoria}: ${moeda.format(l.valor)} (${det})`;
+    return `${l.tipo === 'receita' ? '💰' : '✅'} ${l.descricao || l.categoria}: ${l.tipo === 'receita' ? '+' : ''}${moeda.format(l.valor)} (${det})`;
   });
   const msg = [...linhas, ...avisos].join('\n');
   try {
@@ -139,13 +142,13 @@ export async function receberNotificacao(env, form, quem) {
  * Chegou o mesmo gasto por um caminho melhor (comprovante ou Apple Pay): apaga o lançamento
  * que a notificação tinha criado (mesmo valor e dia, últimas 12 h), para não contar duas vezes.
  */
-export async function substituirNotificacao(env, valorCentavos, data) {
+export async function substituirNotificacao(env, valorCentavos, data, tipo = 'gasto') {
   await env.DB.prepare(
     `DELETE FROM lancamentos WHERE id = (
        SELECT id FROM lancamentos
-        WHERE origem='notificacao' AND tipo='gasto' AND valor=?1 AND data=?2 AND criado_em >= datetime('now', '-12 hours')
+        WHERE origem='notificacao' AND tipo=?3 AND valor=?1 AND data=?2 AND criado_em >= datetime('now', '-12 hours')
         ORDER BY id DESC LIMIT 1)`
   )
-    .bind(valorCentavos, data)
+    .bind(valorCentavos, data, tipo)
     .run();
 }
