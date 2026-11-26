@@ -147,6 +147,10 @@ export async function receberNotificacao(env, form, quem) {
     .join('\n')
     .slice(0, 1000);
 
+  // notificação da Carteira / Apple Pay: não traz informação útil (compras já vêm pela automação
+  // "Transação" do Apple Pay, e boletos/faturas só pela notificação do banco)
+  if (/carteira|wallet|apple\s*pay/i.test(app)) return '';
+
   // filtros baratos antes da IA (economiza a cota grátis)
   const plano = bruto.replace(/\s+/g, ' '); // título e corpo numa linha só, para os filtros
   if (!bruto || !TEM_VALOR.test(plano)) return '';
