@@ -538,6 +538,7 @@ function delta(no, atual, anterior, { menorEhMelhor }) {
 
 function desenharPainel(r, g) {
   const t = g.totais;
+  mostrarAlertaBoletos(g.boletos);
   const saldo = $('#k-saldo');
   G.contar(saldo, t.saldo);
   saldo.classList.toggle('negativo', t.saldo < 0);
@@ -705,8 +706,159 @@ function editarFixa(conta) {
 // ---------- contas: variáveis, cartões, fixas ----------
 $('#sub-contas').addEventListener('change', (e) => {
   const v = e.target.value;
-  for (const p of ['variaveis', 'cartoes', 'fixas']) $(`#painel-${p}`).hidden = p !== v;
+  for (const p of ['variaveis', 'cartoes', 'fixas', 'boletos']) $(`#painel-${p}`).hidden = p !== v;
+  if (v === 'boletos') carregarBoletos().catch((err) => aviso(err.message));
 });
+
+// ---------- boletos ----------
+let boletos = [];
+const hojeIso = () => new Date(Date.now() - 3 * 3600e3).toISOString().slice(0, 10);
+const diasAte = (iso) => Math.round((Date.parse(`${iso}T12:00:00Z`) - Date.parse(`${hojeIso()}T12:00:00Z`)) / 864e5);
+function seloVenc(b) {
+  if (!b.vencimento) return '<small class="selo">sem vencimento</small>';
+  const d = diasAte(b.vencimento);
+  if (d < 0) return `<small class="selo alerta">venceu há ${-d} dia${d === -1 ? '' : 's'}</small>`;
+  if (d === 0) return '<small class="selo alerta">vence hoje</small>';
+  if (d <= 3) return `<small class="selo atencao">vence em ${d} dia${d === 1 ? '' : 's'}</small>`;
+  return `<small class="selo">vence ${dataBR(b.vencimento)}</small>`;
+}
+
+function mostrarAlertaBoletos(a) {
+  const el = $('#bol-alerta');
+  const n = a?.qtd || 0;
+  $('#bol-contador').hidden = !n;
+  $('#bol-contador').textContent = n;
+  el.hidden = !n;
+  if (!n) return;
+  const venc = a.vencidos ? ` · <b>${a.vencidos} vencido${a.vencidos > 1 ? 's' : ''}</b>` : a.proximo ? ` · próximo vence ${dataBR(a.proximo)}` : '';
+  el.classList.toggle('urgente', Boolean(a.vencidos) || (a.proximo && diasAte(a.proximo) <= 3));
+  el.innerHTML = `🧾 <span>${n} boleto${n > 1 ? 's' : ''} em aberto · <b>${reais(a.total)}</b>${venc}</span><i>›</i>`;
+}
+
+$('#bol-alerta').addEventListener('click', () => {
+  $('[data-aba=fixas]').click();
+  const r = $('#sub-contas input[value=boletos]');
+  r.checked = true;
+  r.dispatchEvent(new Event('change', { bubbles: true }));
+});
+
+async function carregarBoletos() {
+  const status = $('#bol-filtro input:checked').value;
+  const r = await api(`/api/boletos?status=${status}`);
+  boletos = r.itens;
+  mostrarAlertaBoletos(r.abertos);
+  $('#bol-resumo').textContent =
+    status === 'aberto'
+      ? r.abertos.qtd
+        ? `${r.abertos.qtd} em aberto · ${reais(r.abertos.total)}`
+        : 'Nenhum boleto em aberto 🎉'
+      : '';
+  $('#boletos').innerHTML = boletos
+    .map((b) => {
+      const tit = esc(b.descricao || (b.tipo === 'fatura' ? `Fatura ${b.cartao || ''}` : 'Boleto'));
+      const det = [b.tipo === 'fatura' ? `💳 ${b.cartao || 'cartão'}` : b.categoria, b.quem].filter(Boolean).map(esc).join(' · ');
+      return status === 'aberto'
+        ? `<li data-id="${b.id}"><div class="info clicavel"><strong>${tit}</strong><small>${det}</small> ${seloVenc(b)}</div>
+            <div class="acao-dir"><span class="valor">${reais(b.valor)}</span><button type="button" class="btn-mini" data-pagar>Pagar</button></div></li>`
+        : `<li data-id="${b.id}" class="paga"><div class="info"><strong>${tit}</strong><small>${det} · pago ${dataBR(b.pago_em)}</small></div>
+            <div class="acao-dir"><span class="valor">${reais(b.valor)}</span><button type="button" class="btn-mini" data-reabrir>Desfazer</button></div></li>`;
+    })
+    .join('');
+}
+
+$('#bol-filtro').addEventListener('change', () => carregarBoletos().catch((e) => aviso(e.message)));
+
+$('#boletos').addEventListener('click', async (e) => {
+  const li = e.target.closest('li[data-id]');
+  if (!li) return;
+  const b = boletos.find((x) => x.id === Number(li.dataset.id));
+  if (e.target.closest('[data-pagar]')) return pagarBoletoDlg(b);
+  if (e.target.closest('[data-reabrir]')) {
+    if (!confirm('Desfazer o pagamento? O lançamento gerado será apagado e o boleto volta para "em aberto".')) return;
+    try {
+      await api(`/api/boletos/${b.id}/reabrir`, { metodo: 'POST' });
+      aviso('Voltou para em aberto');
+      await carregarBoletos();
+      recarregar();
+    } catch (err) {
+      aviso(err.message);
+    }
+    return;
+  }
+  if (e.target.closest('.info.clicavel')) editarBoleto(b);
+});
+
+function pagarBoletoDlg(b) {
+  const dlg = $('#dlg-pagar');
+  const f = $('#form-pagar');
+  $('#pagar-titulo').textContent = `Pagar ${b.descricao || 'boleto'}`;
+  $('#pagar-sub').textContent =
+    `${reais(b.valor)}. ` + (b.tipo === 'fatura' ? 'Entra como fatura paga do cartão (só soma o que não foi lançado compra a compra).' : 'Vai somar nas despesas na data do pagamento.');
+  f.data.value = hojeIso();
+  dlg.onclose = async () => {
+    if (dlg.returnValue !== 'pagar') return;
+    try {
+      await api(`/api/boletos/${b.id}/pagar`, { metodo: 'POST', corpo: { data: f.data.value, quem: estado.quem } });
+      aviso('Pago ✔');
+      await carregarBoletos();
+      recarregar();
+    } catch (err) {
+      aviso(err.message);
+    }
+  };
+  dlg.returnValue = '';
+  dlg.showModal();
+}
+
+$('#btn-novo-boleto').addEventListener('click', () => editarBoleto(null));
+
+function editarBoleto(b) {
+  const dlg = $('#dlg-boleto');
+  const f = $('#form-boleto');
+  const c = estado.config;
+  $('#boleto-titulo').textContent = b ? 'Editar boleto' : 'Novo boleto';
+  f.descricao.value = b?.descricao || '';
+  f.valor.value = b ? paraCampo(b.valor) : '';
+  f.vencimento.value = b?.vencimento || '';
+  f.tipo.value = b?.tipo || 'conta';
+  f.cartao_id.innerHTML = c.cartoes.map((x) => `<option value="${x.id}"${x.id === b?.cartao_id ? ' selected' : ''}>${esc(x.nome)}</option>`).join('');
+  opcoes(f.categoria, c.categorias, b?.categoria || 'Outros');
+  opcoes(f.quem, c.pessoas, b?.quem || estado.quem);
+  const trocar = () => {
+    $('.bol-cartao', f).hidden = f.tipo.value !== 'fatura';
+    $('.bol-categoria', f).hidden = f.tipo.value === 'fatura';
+  };
+  f.tipo.onchange = trocar;
+  trocar();
+  $('#boleto-excluir').hidden = !b;
+  dlg.onclose = async () => {
+    const corpo = {
+      descricao: f.descricao.value,
+      valor: f.valor.value,
+      vencimento: f.vencimento.value || null,
+      tipo: f.tipo.value,
+      cartao_id: f.tipo.value === 'fatura' ? Number(f.cartao_id.value) : null,
+      categoria: f.categoria.value,
+      quem: f.quem.value,
+    };
+    try {
+      if (dlg.returnValue === 'salvar') {
+        await api(b ? `/api/boletos/${b.id}` : '/api/boletos', { metodo: b ? 'PUT' : 'POST', corpo });
+        aviso('Salvo ✔');
+      } else if (dlg.returnValue === 'excluir') {
+        if (!confirm('Ignorar este boleto? Ele sai da lista e não soma em nada.')) return;
+        await api(`/api/boletos/${b.id}`, { metodo: 'DELETE' });
+        aviso('Ignorado');
+      } else return;
+      await carregarBoletos();
+      carregarResumo();
+    } catch (err) {
+      aviso(err.message);
+    }
+  };
+  dlg.returnValue = '';
+  dlg.showModal();
+}
 
 function renderVariaveis(r) {
   const lista = r.variaveis.filter((v) => v.qtd > 0).sort((a, b) => b.total - a.total);

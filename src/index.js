@@ -5,6 +5,7 @@ import { paraCentavos, textoCurto, prepararLancamento, salvarLancamentos } from 
 import { webhook as telegramWebhook, conectar as telegramConectar, status as telegramStatus } from './telegram.js';
 import { receberDoAtalho } from './atalho.js';
 import { marcarContasFixas, separarContasFixas } from './fixas.js';
+import { listarBoletos, resumoAbertos, criarBoleto, editarBoleto, ignorarBoleto, pagarBoleto, reabrirBoleto } from './boletos.js';
 import { planilhaDoMes, planilhaCompleta, relatorioPessoa } from './planilha.js';
 import {
   intervalo,
@@ -112,6 +113,7 @@ async function painel(env, mes) {
   const r = atual.r;
   const rA = ant.r;
   return {
+    boletos: await resumoAbertos(env),
     mes,
     hoje: hojeIso,
     ultimo_dia: ultimoDia,
@@ -185,6 +187,32 @@ async function api(req, env, url) {
         motor: env.ANTHROPIC_API_KEY ? 'Claude' : 'Cloudflare (gratuito)',
       },
     });
+  }
+
+  // ----- boletos -----
+  if (pathname === '/api/boletos' && metodo === 'GET') {
+    return json({ itens: await listarBoletos(env, searchParams.get('status')), abertos: await resumoAbertos(env) });
+  }
+  if (pathname === '/api/boletos' && metodo === 'POST') {
+    const b = await criarBoleto(env, await req.json().catch(() => erro(400, 'JSON inválido')), 'manual');
+    return json(b, 201);
+  }
+  const mb = pathname.match(/^\/api\/boletos\/(\d+)(?:\/(pagar|reabrir))?$/);
+  if (mb && !mb[2] && metodo === 'PUT') {
+    await editarBoleto(env, Number(mb[1]), await req.json().catch(() => erro(400, 'JSON inválido')));
+    return json({ ok: true });
+  }
+  if (mb && !mb[2] && metodo === 'DELETE') {
+    await ignorarBoleto(env, Number(mb[1]));
+    return json({ ok: true });
+  }
+  if (mb && mb[2] === 'pagar' && metodo === 'POST') {
+    const b = await req.json().catch(() => ({}));
+    return json(await pagarBoleto(env, Number(mb[1]), b));
+  }
+  if (mb && mb[2] === 'reabrir' && metodo === 'POST') {
+    await reabrirBoleto(env, Number(mb[1]));
+    return json({ ok: true });
   }
 
   if (pathname === '/api/painel' && metodo === 'GET') {

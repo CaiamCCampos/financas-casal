@@ -3,10 +3,11 @@
 // Nunca conta dinheiro que só muda de conta entre o casal (Caiam ⇄ Milena, ou para si mesmo).
 // Fica em silêncio (resposta vazia) quando a notificação não vira lançamento, para o atalho não avisar à toa.
 
-import { CAT_CARTAO, pessoas } from './config.js';
+import { CAT_CARTAO, hoje, pessoas } from './config.js';
 import { extrair } from './ia.js';
-import { salvarLancamentos, textoCurto } from './lancamentos.js';
-import { avisarNoTelegram } from './telegram.js';
+import { paraCentavos, salvarLancamentos, textoCurto } from './lancamentos.js';
+import { avisarNoTelegram, avisarBoletoTelegram } from './telegram.js';
+import { abertoPorValor, criarBoleto, pagarBoleto, textoBoleto } from './boletos.js';
 
 const moeda = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 const dataBR = (iso) => iso.split('-').reverse().slice(0, 2).join('/');
@@ -76,6 +77,68 @@ async function categoriaAnterior(env, descricao) {
   return igual?.categoria || null;
 }
 
+// aviso de cobrança (boleto, fatura) x aviso de que foi pago
+const COBRANCA = /\b(boleto|c[oó]digo de barras|linha digit[aá]vel|cobran[çc]a|fatura)\b/i;
+const PAGO = /\b(pag[oa]|realizad[oa]|efetuad[oa]|confirmad[oa]|quitad[oa]|recebemos|debitad[oa])\b/i;
+
+function valorDoTexto(t) {
+  const m = t.match(/R\$\s*([\d.]+,\d{2})/);
+  return m ? paraCentavos(m[1]) : 0;
+}
+
+/** "vence 27/11", "vencimento em 05/12/2026", "vence dia 10/12" -> AAAA-MM-DD */
+function vencimentoDoTexto(t) {
+  const m = t.match(/venc\w*\s*(?:em|dia|no dia|:)?\s*(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/i);
+  if (!m) return null;
+  const h = hoje();
+  let ano = m[3] ? Number(m[3].length === 2 ? `20${m[3]}` : m[3]) : Number(h.slice(0, 4));
+  const iso = (a) => `${a}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+  // sem ano e a data já passou há muito: é do ano que vem (ex.: em dezembro, "vence 05/01")
+  if (!m[3] && iso(ano) < h && Number(m[2]) < Number(h.slice(5, 7)) - 1) ano += 1;
+  return iso(ano);
+}
+
+async function receberCobranca(env, plano, app, quem) {
+  const f = new FormData();
+  f.append('quem', quem);
+  f.append('tipo', 'texto');
+  f.append(
+    'texto',
+    `Aviso de COBRANÇA (boleto ou fatura a pagar) do app ${app || 'do banco'}. Devolva UM item com: valor; data = data de VENCIMENTO; ` +
+      `descricao = quem cobra (ex.: "Fatura Inter", "Enel", "Escola"); se for fatura de cartão de crédito, categoria "${CAT_CARTAO}" e cartao = o cartão (ou "${app}"); ` +
+      `senão, a categoria da conta.\n\n${plano}`
+  );
+  const r = await extrair(env, f);
+  const i = (r.itens || []).find((x) => x.valor > 0);
+  const valor = valorDoTexto(plano) || (i ? Math.round(i.valor * 100) : 0);
+  if (!valor) return '';
+  const fatura = (i && i.categoria === CAT_CARTAO) || /fatura/i.test(plano);
+  const venc = vencimentoDoTexto(plano) || (i && i.data !== hoje() ? i.data : null);
+  let b;
+  try {
+    b = await criarBoleto(
+      env,
+      {
+        descricao: i?.descricao || (fatura ? `Fatura ${app}` : app || 'Boleto'),
+        valor: valor / 100,
+        vencimento: venc,
+        tipo: fatura ? 'fatura' : 'conta',
+        cartao: fatura ? i?.cartao || app : '',
+        categoria: i?.categoria,
+        quem,
+      },
+      'notificacao',
+      plano
+    );
+  } catch (e) {
+    return `⚠️ ${e.message}`;
+  }
+  if (b.repetido) return '';
+  const msg = `${textoBoleto(b)}\nFicou em Boletos, em aberto (não soma até pagar).`;
+  await avisarBoletoTelegram(env, quem, `🔔 Notificação ${app}:\n\n${msg}`, b.id).catch((e) => console.error('boleto tg', e));
+  return msg;
+}
+
 export async function receberNotificacao(env, form, quem) {
   const app = textoCurto(form.get('app'), 40);
   const bruto = [form.get('titulo'), form.get('corpo'), form.get('texto')]
@@ -86,7 +149,24 @@ export async function receberNotificacao(env, form, quem) {
 
   // filtros baratos antes da IA (economiza a cota grátis)
   const plano = bruto.replace(/\s+/g, ' '); // título e corpo numa linha só, para os filtros
-  if (!bruto || !TEM_VALOR.test(plano) || NAO_CONTA.test(plano) || IGNORAR.test(plano)) return '';
+  if (!bruto || !TEM_VALOR.test(plano)) return '';
+
+  // boleto / cobrança / fatura: vai para a área de Boletos (não soma até ser pago)
+  if (COBRANCA.test(plano)) {
+    if (!PAGO.test(plano)) return receberCobranca(env, plano, app, quem);
+    // aviso de pagamento: quita o boleto em aberto de mesmo valor
+    const v = valorDoTexto(plano);
+    const b = v ? await abertoPorValor(env, v) : null;
+    if (b) {
+      await pagarBoleto(env, b.id, { quem });
+      const msg = `✅ ${b.descricao || 'Boleto'} pago: ${moeda.format(b.valor / 100)}`;
+      await avisarNoTelegram(env, quem, `🔔 Notificação ${app}:\n\n${msg}`, []).catch(() => {});
+      return msg;
+    }
+    // pagamento de fatura sem boleto aberto: as compras já somaram, não lança
+    if (/fatura/i.test(plano)) return '';
+  }
+  if (NAO_CONTA.test(plano) || IGNORAR.test(plano)) return '';
 
   const entrada = new FormData();
   entrada.append('quem', quem);

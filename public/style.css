@@ -239,7 +239,8 @@ dialog h3 { margin: 0 0 4px; }
 .telegram .dica { margin: 6px 0 8px; }
 .telegram .acoes { margin-top: 0; }
 
-.segmento.sub { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 12px; }
+.segmento.sub { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 12px; }
+.segmento.sub span { padding: 8px 2px; font-size: .88rem; }
 .lista.mini li { padding: 8px 12px; font-size: .92rem; }
 .formas { display: block; color: var(--suave); font-size: .8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nova-cat { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
@@ -428,3 +429,19 @@ dialog h3 { margin: 0 0 4px; }
 .g-dia-btn { grid-template-columns: 40px minmax(0, 1fr) 92px; }
 .g-dia-btn b { text-align: right; }
 .g-fatia.neutro { stroke: var(--neutro); }
+
+/* boletos */
+.contador { display: inline-block; min-width: 17px; height: 17px; line-height: 17px; padding: 0 4px; margin-left: 4px; border-radius: 99px; background: var(--gasto); color: #fff; font-size: .7rem; font-style: normal; vertical-align: 1px; }
+.bol-filtro { margin-bottom: 10px; }
+.bol-resumo { margin: 0 2px 8px; color: var(--suave); font-size: .9rem; }
+.bol-resumo:empty { display: none; }
+.btn-mini { border: 1px solid var(--linha); background: var(--fundo); color: var(--marca); font-weight: 600; font-size: .8rem; border-radius: 8px; padding: 4px 10px; cursor: pointer; }
+.selo.atencao { color: #d28e05; border-color: currentColor; }
+.bol-alerta {
+  width: 100%; display: flex; align-items: center; gap: 10px; text-align: left; cursor: pointer;
+  background: var(--cartao); border: 1px solid var(--linha); border-radius: 14px; padding: 12px 14px; margin-bottom: 12px;
+  font-size: .92rem; animation: g-sobe .4s var(--facil) both;
+}
+.bol-alerta span { flex: 1; min-width: 0; }
+.bol-alerta i { font-style: normal; color: var(--suave); font-size: 1.3rem; }
+.bol-alerta.urgente { border-color: var(--gasto); background: color-mix(in srgb, var(--gasto) 10%, var(--cartao)); }

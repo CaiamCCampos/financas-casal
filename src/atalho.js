@@ -8,6 +8,7 @@ import { paraCentavos, salvarLancamentos, textoCurto } from './lancamentos.js';
 import { carregarCategorias, resolverCartao } from './calculo.js';
 import { avisarNoTelegram } from './telegram.js';
 import { separarContasFixas, textoBaixa } from './fixas.js';
+import { quitarPorComprovante, textoPago } from './boletos.js';
 import { receberNotificacao } from './notificacao.js';
 
 const moeda = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -57,7 +58,10 @@ export async function receberDoAtalho(env, form) {
 
   // comprovante com mensagem de conta fixa ("condomínio"): dá baixa nela em vez de lançar gasto
   const sep = await separarContasFixas(env, (r.itens || []).filter((i) => i.valor > 0));
-  const linhasBaixa = sep.baixas.map(textoBaixa);
+  // comprovante de um boleto em aberto (mesmo valor): quita o boleto
+  const qb = await quitarPorComprovante(env, sep.lancar, quem);
+  sep.lancar = qb.lancar;
+  const linhasBaixa = [...sep.baixas.map(textoBaixa), ...qb.pagos.map(textoPago)];
 
   const validos = [];
   const avisos = [...sep.avisos];
@@ -75,7 +79,7 @@ export async function receberDoAtalho(env, form) {
     validos.push(item);
   }
   if (!validos.length) {
-    if (!sep.baixas.length) return `🤔 ${avisos[0] || r.observacao || 'Não encontrei nenhum valor nesse comprovante.'}`;
+    if (!sep.baixas.length && !qb.pagos.length) return `🤔 ${avisos[0] || r.observacao || 'Não encontrei nenhum valor nesse comprovante.'}`;
     const msgB = [...linhasBaixa, ...avisos.map((x) => `ℹ️ ${x}`)].join('\n');
     try {
       await avisarNoTelegram(env, quem, `📲 Pelo atalho do iPhone:\n\n${msgB}`, [], sep.baixas);

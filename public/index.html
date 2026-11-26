@@ -81,6 +81,7 @@
 
       <!-- RESUMO -->
       <section class="aba" id="aba-resumo" hidden>
+        <button type="button" class="bol-alerta" id="bol-alerta" hidden></button>
         <div class="g-hero">
           <span class="g-hero-rot">Saldo do mês</span>
           <strong id="k-saldo" class="g-hero-val">R$ 0,00</strong>
@@ -162,6 +163,7 @@
           <label><input type="radio" name="sub-contas" value="variaveis" checked><span>Variáveis</span></label>
           <label><input type="radio" name="sub-contas" value="cartoes"><span>Cartões</span></label>
           <label><input type="radio" name="sub-contas" value="fixas"><span>Fixas</span></label>
+          <label><input type="radio" name="sub-contas" value="boletos"><span>Boletos<i class="contador" id="bol-contador" hidden></i></span></label>
         </div>
 
         <div class="sub-painel" id="painel-variaveis">
@@ -174,6 +176,17 @@
           <p class="dica">Compras do mês em cada cartão e a fatura que cobre essas compras. As compras já somam; da fatura só entra o que não foi lançado.</p>
           <ul class="lista" id="cartoes"></ul>
           <button class="btn" id="btn-novo-cartao" type="button">+ Novo cartão</button>
+        </div>
+
+        <div class="sub-painel" id="painel-boletos" hidden>
+          <p class="dica">Boletos e faturas que chegaram. Em aberto não somam nas despesas; quando você marca como pago, entram no dia do pagamento. Fatura de cartão paga entra só como conferência (as compras já somaram).</p>
+          <div class="segmento bol-filtro" id="bol-filtro">
+            <label><input type="radio" name="bol-filtro" value="aberto" checked><span>Em aberto</span></label>
+            <label><input type="radio" name="bol-filtro" value="pago"><span>Pagos</span></label>
+          </div>
+          <p class="bol-resumo" id="bol-resumo"></p>
+          <ul class="lista" id="boletos"></ul>
+          <button class="btn" id="btn-novo-boleto" type="button">+ Novo boleto</button>
         </div>
 
         <div class="sub-painel" id="painel-fixas" hidden>
@@ -281,6 +294,45 @@
       </div>
       <p class="dica">Renomear muda também os lançamentos antigos. Remover tira da lista, mas o histórico continua nos relatórios.</p>
       <div class="acoes"><button class="btn" value="ok" type="submit">Fechar</button></div>
+    </form>
+  </dialog>
+
+  <!-- Boleto -->
+  <dialog id="dlg-boleto">
+    <form method="dialog" id="form-boleto">
+      <h3 id="boleto-titulo">Boleto</h3>
+      <label>Descrição <input name="descricao" maxlength="80" placeholder="Ex.: Fatura Inter, Escola, Enel"></label>
+      <div class="duas">
+        <label>Valor (R$) <input name="valor" inputmode="decimal" placeholder="0,00" required></label>
+        <label>Vence em <input name="vencimento" type="date"></label>
+      </div>
+      <label>Tipo
+        <select name="tipo">
+          <option value="conta">Conta / boleto comum</option>
+          <option value="fatura">Fatura de cartão</option>
+        </select>
+      </label>
+      <label class="bol-cartao">Cartão <select name="cartao_id"></select></label>
+      <label class="bol-categoria">Categoria <select name="categoria"></select></label>
+      <label>Quem <select name="quem"></select></label>
+      <div class="acoes">
+        <button class="btn perigo" value="excluir" id="boleto-excluir" type="submit">Ignorar</button>
+        <button class="btn" value="cancelar" formnovalidate type="submit">Cancelar</button>
+        <button class="btn primario" value="salvar" type="submit">Salvar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Pagar boleto -->
+  <dialog id="dlg-pagar">
+    <form method="dialog" id="form-pagar">
+      <h3 id="pagar-titulo">Marcar como pago</h3>
+      <p class="dica" id="pagar-sub"></p>
+      <label>Pago em <input name="data" type="date" required></label>
+      <div class="acoes">
+        <button class="btn" value="cancelar" formnovalidate type="submit">Cancelar</button>
+        <button class="btn primario" value="pagar" type="submit">Confirmar pagamento</button>
+      </div>
     </form>
   </dialog>
 

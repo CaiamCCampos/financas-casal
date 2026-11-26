@@ -2,6 +2,7 @@
 // Foto, PDF, mensagem de voz ou texto -> IA -> salva direto -> responde com botão Desfazer.
 
 import { pessoas, hoje, CAT_CARTAO } from './config.js';
+import { pagarBoleto, ignorarBoleto, quitarPorComprovante, textoPago } from './boletos.js';
 import { separarContasFixas, textoBaixa, dadosDesfazer, lerDesfazer, desfazerBaixas } from './fixas.js';
 import { extrair } from './ia.js';
 import { salvarLancamentos } from './lancamentos.js';
@@ -275,6 +276,8 @@ async function lancar(env, msg, u, origem) {
 
   // comprovante com mensagem de conta fixa ("condomínio"): baixa na conta em vez de gasto novo
   const sep = await separarContasFixas(env, (r.itens || []).filter((i) => i.valor > 0));
+  const qb = await quitarPorComprovante(env, sep.lancar, u.pessoa);
+  sep.lancar = qb.lancar;
   const validos = [];
   const avisos = [...sep.avisos];
   for (const i of sep.lancar) {
@@ -285,7 +288,7 @@ async function lancar(env, msg, u, origem) {
     }
     validos.push({ ...i, quem: i.quem || u.pessoa, origem: r.origem || 'texto' });
   }
-  if (!validos.length && !sep.baixas.length) {
+  if (!validos.length && !sep.baixas.length && !qb.pagos.length) {
     const motivo = avisos[0] || r.observacao || 'Não encontrei nenhum valor. Tente dizer quanto foi e com o quê.';
     return responder(env, chat, `${ouvi}🤔 ${html(motivo)}`);
   }
@@ -338,8 +341,8 @@ async function lancar(env, msg, u, origem) {
     const sinal = l.tipo === 'receita' ? '+' : '';
     return `${EMOJI[l.categoria] || '🧾'} <b>${html(titulo)}</b> — ${sinal}${valor}\n<i>${html(det)}</i>`;
   });
-  linhas.unshift(...sep.baixas.map((b) => html(textoBaixa(b))));
-  const cab = !validos.length ? '✅ Conta fixa marcada como paga' : validos.length > 1 ? `✅ ${validos.length} lançamentos salvos` : '✅ Lançado';
+  linhas.unshift(...sep.baixas.map((b) => html(textoBaixa(b))), ...qb.pagos.map((b) => html(textoPago(b))));
+  const cab = !validos.length ? '✅ Pagamento registrado' : validos.length > 1 ? `✅ ${validos.length} lançamentos salvos` : '✅ Lançado';
   const extra = [r.observacao ? `ℹ️ ${html(r.observacao)}` : '', ...avisos.map((a) => `⚠️ ${html(a)}`)]
     .filter(Boolean)
     .join('\n');
@@ -385,6 +388,22 @@ async function botao(env, q) {
 
   if (!u.pessoa) return fim('Escolha quem você é primeiro.');
 
+  if (q.data?.startsWith('bol:')) {
+    const [, acao, id] = q.data.split(':');
+    const editar = (text) => tg(env, 'editMessageText', { chat_id: chat, message_id: q.message.message_id, text });
+    if (acao === 'p') {
+      const b = await pagarBoleto(env, Number(id), { quem: u.pessoa });
+      await fim('Pago');
+      return editar(`✅ ${b.descricao || 'Boleto'} pago hoje: ${reais(b.valor)}.${b.tipo === 'fatura' ? ' Entrou como fatura paga (conferência do cartão).' : ' Somado nas despesas.'}`);
+    }
+    if (acao === 'i') {
+      await ignorarBoleto(env, Number(id));
+      await fim('Ignorado');
+      return editar('🗑 Boleto ignorado.');
+    }
+    return fim('');
+  }
+
   if (q.data?.startsWith('dx:')) {
     const { ids, baixas } = lerDesfazer(q.data);
     if (ids.length) await apagar(env, ids, q.from.id);
@@ -410,6 +429,27 @@ async function botao(env, q) {
     return;
   }
   return fim('');
+}
+
+// ---------- boletos ----------
+
+/** Aviso de boleto novo com botões "Paguei" e "Ignorar". */
+export async function avisarBoletoTelegram(env, pessoa, texto, id) {
+  if (!env.TELEGRAM_TOKEN) return;
+  const u = await env.DB.prepare('SELECT chat_id FROM telegram_usuarios WHERE pessoa=?1 ORDER BY criado_em DESC LIMIT 1')
+    .bind(pessoa)
+    .first();
+  if (!u) return;
+  await tg(env, 'sendMessage', {
+    chat_id: u.chat_id,
+    text: texto,
+    reply_markup: {
+      inline_keyboard: [[
+        { text: '✅ Paguei', callback_data: `bol:p:${id}` },
+        { text: '🗑 Ignorar', callback_data: `bol:i:${id}` },
+      ]],
+    },
+  });
 }
 
 // ---------- aviso vindo de fora (atalho do iPhone) ----------
