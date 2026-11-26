@@ -228,12 +228,17 @@ function coresPorCategoria(itens, ordem) {
 
 export function rosca(box, legenda, categorias, ordem) {
   box.innerHTML = '';
+  // sempre do maior para o menor, inclusive categorias novas
+  categorias = [...categorias].sort((a, b) => b.total - a.total);
   const total = categorias.reduce((t, c) => t + c.total, 0);
-  // até 7 fatias + "Demais" (nunca uma 9ª cor)
-  let itens = categorias.slice(0, 7);
-  const resto = categorias.slice(7);
-  if (resto.length) itens.push({ categoria: 'Demais', total: resto.reduce((t, c) => t + c.total, 0), demais: resto });
-  const cor = coresPorCategoria(itens, ordem);
+  // até 7 cores; as menores (8ª em diante) ficam numa fatia cinza "Demais" (nunca uma 9ª cor),
+  // mas continuam listadas uma a uma, na ordem, na legenda
+  const coloridas = categorias.length > 8 ? categorias.slice(0, 7) : categorias;
+  const resto = categorias.slice(coloridas.length);
+  const itens = [...coloridas];
+  if (resto.length) itens.push({ categoria: 'Demais', total: resto.reduce((t, c) => t + c.total, 0), demais: resto, neutro: true });
+  const cor = coresPorCategoria(coloridas, ordem);
+  cor.Demais = 'neutro';
   const S = 200;
   const R = 76;
   const esp = 22;
@@ -251,7 +256,7 @@ export function rosca(box, legenda, categorias, ordem) {
         cx: S / 2,
         cy: S / 2,
         r: R,
-        class: `g-fatia s${cor[it.categoria]} g-alvo`,
+        class: `g-fatia ${it.neutro ? 'neutro' : `s${cor[it.categoria]}`} g-alvo`,
         'stroke-width': esp,
         'stroke-dasharray': `0 ${C}`,
         'stroke-dashoffset': -acc,
@@ -272,22 +277,24 @@ export function rosca(box, legenda, categorias, ordem) {
   function selecionar(i) {
     sel = sel === i ? -1 : i;
     fatias.forEach((f, j) => f.classList.toggle('apagado', sel !== -1 && j !== sel));
-    [...legenda.children].forEach((li, j) => li.classList.toggle('ativo', j === sel));
+    [...legenda.children].forEach((li) => li.classList.toggle('ativo', Number(li.dataset.i) === sel));
     if (sel === -1) {
       tTit.textContent = 'Total';
       tVal.textContent = reais(total);
     } else {
       const it = itens[sel];
-      tTit.textContent = `${it.categoria} · ${Math.round((it.total / total) * 100)}%`;
+      tTit.textContent = `${it.categoria} · ${pct(it.total)}%`;
       tVal.textContent = reais(it.total);
     }
   }
-  legenda.innerHTML = itens
-    .map(
-      (it, i) => `<li data-i="${i}"><i class="bol s${cor[it.categoria]}"></i><span>${esc(it.categoria)}${
-        it.demais ? ` <small>(${it.demais.map((d) => esc(d.categoria)).join(', ')})</small>` : ''
-      }</span><b>${reais(it.total)}</b><small class="pct">${total ? Math.round((it.total / total) * 100) : 0}%</small></li>`
-    )
+  // legenda: todas as categorias, uma por linha, do maior para o menor
+  const pct = (v) => (total ? Math.max(v ? 1 : 0, Math.round((v / total) * 100)) : 0);
+  legenda.innerHTML = categorias
+    .map((c, j) => {
+      const i = j < coloridas.length ? j : itens.length - 1;
+      const bol = j < coloridas.length ? `s${cor[c.categoria]}` : 'neutro';
+      return `<li data-i="${i}"><i class="bol ${bol}"></i><span>${esc(c.categoria)}</span><b>${reais(c.total)}</b><small class="pct">${pct(c.total)}%</small></li>`;
+    })
     .join('');
   legenda.onclick = (e) => {
     const li = e.target.closest('[data-i]');

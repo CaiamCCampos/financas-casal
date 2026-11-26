@@ -427,3 +427,4 @@ dialog h3 { margin: 0 0 4px; }
 .g-rosca-box { max-width: 190px; }
 .g-dia-btn { grid-template-columns: 40px minmax(0, 1fr) 92px; }
 .g-dia-btn b { text-align: right; }
+.g-fatia.neutro { stroke: var(--neutro); }
