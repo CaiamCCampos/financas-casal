@@ -215,6 +215,7 @@ async function processar(env, form, quem, ctx) {
       const fixa = await contaFixaDaCobranca(env, i, valor);
       if (fixa) {
         await darBaixa(env.DB, fixa.id, i.data.slice(0, 7), valor);
+        await env.DB.prepare('UPDATE contas_fixas SET valor=?1 WHERE id=?2').bind(valor, fixa.id).run();
         avisos.push(`🏠 ${fixa.nome} de ${i.data.slice(5, 7)}/${i.data.slice(2, 4)} paga: ${moeda.format(valor / 100)}${i.cartao ? ` (${i.cartao})` : ''}`);
         continue;
       }

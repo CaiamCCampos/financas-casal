@@ -49,6 +49,11 @@ export function acharContaFixa(contas, mensagem) {
   return { conta: pontos[0].conta };
 }
 
+/** Procura a conta fixa pela mensagem do Pix e, se não achar, pela descrição ("Condomínio"). */
+function acharTexto(contas, i) {
+  return (i.mensagem && acharContaFixa(contas, i.mensagem)) || (i.descricao && acharContaFixa(contas, i.descricao)) || null;
+}
+
 async function contasAtivas(db) {
   const { results } = await db.prepare('SELECT id, nome, categoria, valor FROM contas_fixas WHERE ativa=1').all();
   return results;
@@ -72,11 +77,11 @@ export async function desfazerBaixas(db, baixas) {
 
 /** Só marca (para o app mostrar no rascunho): item.conta_fixa = { id, nome } quando a mensagem bate. */
 export async function marcarContasFixas(env, itens) {
-  if (!itens.some((i) => i.mensagem)) return itens;
+  if (!itens.some((i) => i.mensagem || i.descricao)) return itens;
   const contas = await contasAtivas(env.DB);
   return itens.map((i) => {
-    if (i.tipo !== 'gasto' || !i.mensagem) return i;
-    const r = acharContaFixa(contas, i.mensagem);
+    if (i.tipo !== 'gasto' || !(i.mensagem || i.descricao)) return i;
+    const r = acharTexto(contas, i);
     const lista = r?.conta ? [r.conta] : r?.varias || [];
     return lista.length ? { ...i, conta_fixa: { ids: lista.map((c) => c.id), nome: lista.map((c) => c.nome).join(' + ') } } : i;
   });
@@ -90,11 +95,11 @@ export async function separarContasFixas(env, itens) {
   const lancar = [];
   const baixas = [];
   const avisos = [];
-  const comMensagem = itens.filter((i) => i.tipo === 'gasto' && (i.mensagem || i.conta_fixa));
+  const comMensagem = itens.filter((i) => i.tipo === 'gasto' && (i.mensagem || i.descricao || i.conta_fixa));
   if (!comMensagem.length) return { lancar: itens, baixas, avisos };
   const contas = await contasAtivas(env.DB);
   for (const i of itens) {
-    if (i.tipo !== 'gasto' || !(i.mensagem || i.conta_fixa)) {
+    if (i.tipo !== 'gasto' || !(i.mensagem || i.descricao || i.conta_fixa)) {
       lancar.push(i);
       continue;
     }
@@ -103,8 +108,8 @@ export async function separarContasFixas(env, itens) {
       const ids = (i.conta_fixa.ids || [i.conta_fixa.id ?? i.conta_fixa]).map(Number);
       escolhidas = contas.filter((c) => ids.includes(c.id));
     } else {
-      const r = acharContaFixa(contas, i.mensagem);
-      if (r?.ambiguas) avisos.push(`A mensagem "${i.mensagem}" serve para ${r.ambiguas.map((c) => c.nome).join(' e ')}: lancei como gasto normal.`);
+      const r = acharTexto(contas, i);
+      if (r?.ambiguas) avisos.push(`"${i.mensagem || i.descricao}" serve para ${r.ambiguas.map((c) => c.nome).join(' e ')}: lancei como gasto normal.`);
       escolhidas = r?.conta ? [r.conta] : r?.varias || [];
     }
     if (!escolhidas.length) {
@@ -126,6 +131,8 @@ export async function separarContasFixas(env, itens) {
       const parte = n === escolhidas.length - 1 ? resto : Math.round(soma ? (total * pesos[n]) / soma : total / escolhidas.length);
       resto -= parte;
       await darBaixa(env.DB, c.id, mes, parte);
+      // reajuste: o valor pago vira o novo valor previsto da conta para os próximos meses
+      if (escolhidas.length === 1) await env.DB.prepare('UPDATE contas_fixas SET valor=?1 WHERE id=?2').bind(parte, c.id).run();
       baixas.push({ conta: c.id, mes, nome: c.nome, valor: parte, para: i.contraparte || '' });
     }
   }
