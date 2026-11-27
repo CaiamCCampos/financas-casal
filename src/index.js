@@ -170,6 +170,10 @@ async function api(req, env, url) {
 
   // tudo daqui pra baixo exige o PIN
   if (!env.APP_PIN) erro(503, 'Defina o segredo APP_PIN no Cloudflare antes de usar o app');
+  if (pathname === '/api/atalho' && !pinConfere(req.headers.get('x-pin') || '', env.APP_PIN)) {
+    // registra a tentativa (sem o PIN) para diagnosticar o atalho do iPhone
+    await env.DB.prepare("INSERT INTO notificacoes_log (app, resultado) VALUES ('', 'PIN incorreto ou ausente no atalho')").run().catch(() => {});
+  }
   if (!pinConfere(req.headers.get('x-pin') || '', env.APP_PIN)) erro(401, 'PIN incorreto');
 
   if (pathname === '/api/config' && metodo === 'GET') {
