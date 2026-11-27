@@ -29,7 +29,7 @@
     // Nomes que aparecem no app, separados por vírgula
     "PESSOAS": "Caiam,Milena",
     // "nao" = conta também Pix entre Caiam e Milena / para si mesmo (teste). Volte para "sim" depois.
-    "IGNORAR_CASAL": "nao",
+    "IGNORAR_CASAL": "sim",
     "MODELO_IA_GRATIS": "@cf/meta/llama-4-scout-17b-16e-instruct",
     // Só usado se o segredo ANTHROPIC_API_KEY existir
     "MODELO_IA": "claude-haiku-5-5"
