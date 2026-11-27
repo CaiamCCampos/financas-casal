@@ -39,6 +39,8 @@ const normal = (t) =>
 
 /** Pix/transferência entre o casal (Caiam ⇄ Milena, ou para a própria conta). */
 function entreOCasal(env, item) {
+  // IGNORAR_CASAL = "nao" desliga a regra (para testes). Padrão: ligada.
+  if (String(env.IGNORAR_CASAL || '').toLowerCase() === 'nao') return false;
   const outro = normal(item.contraparte);
   if (!outro) return false;
   return pessoas(env).some((p) => new RegExp(`\\b${normal(p)}\\b`).test(outro));
