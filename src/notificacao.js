@@ -8,6 +8,7 @@ import { extrair } from './ia.js';
 import { paraCentavos, salvarLancamentos, textoCurto } from './lancamentos.js';
 import { avisarNoTelegram, avisarBoletoTelegram } from './telegram.js';
 import { abertoPorValor, criarBoleto, pagarBoleto, textoBoleto } from './boletos.js';
+import { acharContaFixa, darBaixa } from './fixas.js';
 
 const moeda = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 const dataBR = (iso) => iso.split('-').reverse().slice(0, 2).join('/');
@@ -25,7 +26,7 @@ const IGNORAR = new RegExp(
     'pagamento (da|de) (sua )?fatura',
     'negad[oa]', 'recusad[oa]', 'n[aã]o (foi )?aprovad[oa]', 'cancelad[oa]', 'agendad[oa]', 'programad[oa]',
     'aplica[çc][aã]o', 'investiment', 'resgate', '\\bcdb\\b', 'poupan[çc]a', 'caixinha', 'cofrinho',
-    'US\\$', 'c[oó]digo de (seguran|verifica)', 'token',
+    'c[oó]digo de (seguran|verifica)', 'token',
   ].join('|'),
   'i'
 );
@@ -98,7 +99,7 @@ function vencimentoDoTexto(t) {
   return iso(ano);
 }
 
-async function receberCobranca(env, plano, app, quem) {
+async function receberCobranca(env, plano, app, quem, ctx = {}) {
   const f = new FormData();
   f.append('quem', quem);
   f.append('tipo', 'texto');
@@ -111,7 +112,7 @@ async function receberCobranca(env, plano, app, quem) {
   const r = await extrair(env, f);
   const i = (r.itens || []).find((x) => x.valor > 0);
   const valor = valorDoTexto(plano) || (i ? Math.round(i.valor * 100) : 0);
-  if (!valor) return '';
+  if (!valor) return motivo(ctx, 'cobrança sem valor');
   const fatura = (i && i.categoria === CAT_CARTAO) || /fatura/i.test(plano);
   const venc = vencimentoDoTexto(plano) || (i && i.data !== hoje() ? i.data : null);
   let b;
@@ -133,13 +134,13 @@ async function receberCobranca(env, plano, app, quem) {
   } catch (e) {
     return `⚠️ ${e.message}`;
   }
-  if (b.repetido) return '';
+  if (b.repetido) return motivo(ctx, 'boleto já estava em aberto');
   const msg = `${textoBoleto(b)}\nFicou em Boletos, em aberto (não soma até pagar).`;
   await avisarBoletoTelegram(env, quem, `🔔 Notificação ${app}:\n\n${msg}`, b.id).catch((e) => console.error('boleto tg', e));
   return msg;
 }
 
-export async function receberNotificacao(env, form, quem) {
+async function processar(env, form, quem, ctx) {
   const app = textoCurto(form.get('app'), 40);
   const bruto = [form.get('titulo'), form.get('corpo'), form.get('texto')]
     .map((x) => String(x || '').trim())
@@ -149,15 +150,16 @@ export async function receberNotificacao(env, form, quem) {
 
   // notificação da Carteira / Apple Pay: não traz informação útil (compras já vêm pela automação
   // "Transação" do Apple Pay, e boletos/faturas só pela notificação do banco)
-  if (/carteira|wallet|apple\s*pay/i.test(app)) return '';
+  if (/carteira|wallet|apple\s*pay/i.test(app)) return motivo(ctx, 'app da Carteira/Apple Pay (ignorado)');
 
   // filtros baratos antes da IA (economiza a cota grátis)
   const plano = bruto.replace(/\s+/g, ' '); // título e corpo numa linha só, para os filtros
-  if (!bruto || !TEM_VALOR.test(plano)) return '';
+  if (!bruto) return motivo(ctx, 'notificação vazia (título/corpo não vieram)');
+  if (!TEM_VALOR.test(plano)) return motivo(ctx, 'sem valor em R$');
 
   // boleto / cobrança / fatura: vai para a área de Boletos (não soma até ser pago)
   if (COBRANCA.test(plano)) {
-    if (!PAGO.test(plano)) return receberCobranca(env, plano, app, quem);
+    if (!PAGO.test(plano)) return receberCobranca(env, plano, app, quem, ctx);
     // aviso de pagamento: quita o boleto em aberto de mesmo valor
     const v = valorDoTexto(plano);
     const b = v ? await abertoPorValor(env, v) : null;
@@ -168,9 +170,10 @@ export async function receberNotificacao(env, form, quem) {
       return msg;
     }
     // pagamento de fatura sem boleto aberto: as compras já somaram, não lança
-    if (/fatura/i.test(plano)) return '';
+    if (/fatura/i.test(plano)) return motivo(ctx, 'pagamento de fatura sem boleto aberto');
   }
-  if (NAO_CONTA.test(plano) || IGNORAR.test(plano)) return '';
+  if (NAO_CONTA.test(plano)) return motivo(ctx, `ignorado: ${plano.match(NAO_CONTA)[0]}`);
+  if (IGNORAR.test(plano)) return motivo(ctx, `ignorado: ${plano.match(IGNORAR)[0]}`);
 
   const entrada = new FormData();
   entrada.append('quem', quem);
@@ -188,27 +191,50 @@ export async function receberNotificacao(env, form, quem) {
   const r = await extrair(env, entrada);
   if (r.erro) {
     console.error('notificacao', r.erro, bruto);
-    return '';
+    return motivo(ctx, `erro da IA: ${r.erro}`);
   }
 
   const salvar = [];
   const avisos = [];
+  const pulos = [];
   for (const i of r.itens || []) {
     if (!(i.valor > 0) || i.categoria === CAT_CARTAO) continue;
-    if (entreOCasal(env, i)) continue;
+    if (entreOCasal(env, i)) {
+      pulos.push('Pix entre o casal');
+      continue;
+    }
     const valor = Math.round(i.valor * 100);
-    if (await jaEntrou(env, i.tipo, valor, i.data)) continue;
+    if (await jaEntrou(env, i.tipo, valor, i.data)) {
+      pulos.push(`já lançado (mesmo valor e dia): ${i.descricao}`);
+      continue;
+    }
+    // cobrança de uma conta fixa (assinatura, financiamento...): dá baixa nela em vez de lançar gasto
+    if (i.tipo === 'gasto') {
+      const fixa = await contaFixaDaCobranca(env, i, valor);
+      if (fixa) {
+        await darBaixa(env.DB, fixa.id, i.data.slice(0, 7), valor);
+        avisos.push(`🏠 ${fixa.nome} de ${i.data.slice(5, 7)}/${i.data.slice(2, 4)} paga: ${moeda.format(valor / 100)}${i.cartao ? ` (${i.cartao})` : ''}`);
+        continue;
+      }
+    }
     const cat = i.tipo === 'gasto' ? await categoriaAnterior(env, i.descricao) : null;
     salvar.push({ ...i, categoria: cat || i.categoria, quem: i.quem || quem, origem: 'notificacao' });
   }
-  if (!salvar.length) return '';
+  if (!salvar.length) {
+    if (avisos.length) {
+      const msgF = avisos.join('\n');
+      await avisarNoTelegram(env, quem, `🔔 Notificação ${app}:\n\n${msgF}`, []).catch(() => {});
+      return msgF;
+    }
+    return motivo(ctx, pulos.length ? pulos.join('; ') : `IA não achou movimentação (${r.observacao || 'sem itens'})`);
+  }
 
   let ids;
   try {
     ids = await salvarLancamentos(env, salvar);
   } catch (e) {
     console.error('notificacao salvar', e);
-    return '';
+    return motivo(ctx, `erro ao salvar: ${e.message}`);
   }
   const linhas = salvar.map((l) => {
     const det = [l.categoria, l.cartao || l.pagamento, dataBR(l.data)].filter(Boolean).join(' · ');
@@ -236,4 +262,59 @@ export async function substituirNotificacao(env, valorCentavos, data, tipo = 'ga
   )
     .bind(valorCentavos, data, tipo)
     .run();
+}
+
+function motivo(ctx, texto) {
+  ctx.motivo = texto;
+  return '';
+}
+
+/**
+ * A cobrança é de uma conta fixa? Pelo nome ("Netflix", "YouTube Premium") ou, se o nome não ajudar,
+ * pelo valor exato com o dia perto do vencimento (±3 dias). Só contas ainda não pagas no mês.
+ */
+async function contaFixaDaCobranca(env, item, valor) {
+  const mes = item.data.slice(0, 7);
+  const { results } = await env.DB.prepare(
+    `SELECT f.* FROM contas_fixas f
+     WHERE f.ativa=1 AND NOT EXISTS (SELECT 1 FROM fixas_pagas p WHERE p.conta_id=f.id AND p.mes=?1)`
+  )
+    .bind(mes)
+    .all();
+  if (!results.length) return null;
+  const pelaDescricao = acharContaFixa(results, `${item.descricao || ''} ${item.contraparte || ''}`);
+  if (pelaDescricao?.conta) return pelaDescricao.conta;
+  const dia = Number(item.data.slice(8, 10));
+  const perto = results.filter((f) => f.valor === valor && (!f.dia_vencimento || Math.abs(f.dia_vencimento - dia) <= 3));
+  return perto.length === 1 ? perto[0] : null;
+}
+
+export async function receberNotificacao(env, form, quem) {
+  const ctx = {};
+  let resposta = '';
+  try {
+    resposta = await processar(env, form, quem, ctx);
+  } catch (e) {
+    console.error('notificacao', e);
+    ctx.motivo = `erro: ${e.message}`;
+  }
+  try {
+    const texto = [form.get('app'), form.get('titulo'), form.get('corpo'), form.get('texto')]
+      .map((x) => String(x || '').trim())
+      .filter(Boolean)
+      .join(' | ')
+      .slice(0, 600);
+    await env.DB.batch([
+      env.DB.prepare('INSERT INTO notificacoes_log (quem, app, texto, resultado) VALUES (?1, ?2, ?3, ?4)').bind(
+        quem,
+        textoCurto(form.get('app'), 40),
+        texto,
+        (resposta || ctx.motivo || '').slice(0, 300)
+      ),
+      env.DB.prepare('DELETE FROM notificacoes_log WHERE id <= (SELECT MAX(id) - 300 FROM notificacoes_log)'),
+    ]);
+  } catch (e) {
+    console.error('log notificacao', e);
+  }
+  return resposta;
 }
